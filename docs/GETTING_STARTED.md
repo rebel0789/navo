@@ -1,6 +1,6 @@
 # Getting Started
 
-Navo is a local companion for Codex. It lets users choose between Codex native models and OpenCode Go models, and it can run a local Responses-to-Chat adapter for OpenCode.
+Navo is a local companion for Codex. It lets users choose between Codex native models and OpenCode Go models, and it can run a local Responses adapter for the OpenCode Go endpoints documented by OpenCode.
 
 ## Requirements
 
@@ -11,10 +11,19 @@ Navo is a local companion for Codex. It lets users choose between Codex native m
 
 ## Install
 
-After Navo is published to npm:
+After Navo is published to npm, the shortest path is:
 
 ```bash
-npm install -g navo
+npx -y @rebel0x/navo@latest ui
+```
+
+That downloads the latest package, starts the local dashboard, and opens the setup flow. The dashboard can store the OpenCode Go API key locally and switch Codex between Codex native mode and OpenCode mode.
+
+For a persistent install:
+
+```bash
+npm install -g @rebel0x/navo
+navo ui
 ```
 
 For local development from the repository:
@@ -24,7 +33,7 @@ npm link
 navo help
 ```
 
-## First Run
+## First Run From The Terminal
 
 Store your OpenCode Go API key:
 
@@ -66,7 +75,7 @@ Use Codex native:
 navo codex-model gpt-5.5
 ```
 
-Use OpenCode through the OpenCode connection:
+Use OpenCode Go through the local OpenCode connection:
 
 ```bash
 navo model deepseek-v4-flash
@@ -75,18 +84,18 @@ navo restart
 
 In the dashboard, use:
 
-- **Use Codex Native** for Codex/OpenAI provider mode.
-- **Use OpenCode Mode** for OpenCode provider mode.
+- **Revert to Codex Mode** in **Active Model** for Codex/OpenAI provider mode.
+- **Use OpenCode Mode** in **Active Model** for OpenCode provider mode.
 
-Dashboard switches restart Codex App automatically after changing provider or model. If you switch from the CLI, restart Codex App or start a new Codex session. Existing chats may keep the provider/model they started with; open a new chat in the same project when you want Codex to reload Navo settings.
+Dashboard provider-mode switches restart Codex so the app reloads the provider. If OpenCode mode is already active, selecting another OpenCode model saves config without restarting Codex. Existing Navo-backed chats keep their context and are routed to the selected model on the next request. Native Codex chats do not hit Navo until Codex reloads the Navo provider.
 
 ## Dashboard Runbook
 
 1. Pick the provider mode.
-   Use **Use Codex Native** for Codex models and **Use OpenCode Mode** for OpenCode Go models.
+   Use **Revert to Codex Mode** for Codex models and **Use OpenCode Mode** for OpenCode Go models.
 
-2. Start the refreshed session.
-   Dashboard switches restart Codex App automatically. For CLI switches, restart Codex App or start a new Codex session.
+2. Start or continue the right session.
+   Existing Navo-backed chats can continue and will be routed by the bridge to the selected model. Open a new Codex chat when the current chat is still using the native Codex/OpenAI provider.
 
 3. Prove OpenCode traffic.
 
@@ -128,6 +137,8 @@ Good OpenCode proof includes:
 ```text
 upstream_host=opencode.ai
 upstream_path=/chat/completions
+# or, for MiniMax/Qwen models:
+upstream_path=/messages
 ```
 
 ## Undo

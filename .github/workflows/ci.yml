@@ -15,5 +15,5 @@ jobs:
         with:
           node-version: "20"
       - run: npm run check
+      - run: npm test
       - run: npm pack --dry-run
-

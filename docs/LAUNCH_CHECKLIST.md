@@ -5,6 +5,7 @@ Use this before the first public GitHub and npm release.
 ## Product Quality
 
 - Run `npm run check`.
+- Run `npm test`.
 - Run `npm pack --dry-run` and confirm the package does not include local experiments.
 - Run `navo help`, `navo version`, and `navo ui`.
 - Test Codex native mode with `navo codex-model gpt-5.5`.
@@ -26,10 +27,11 @@ Use this before the first public GitHub and npm release.
 
 ```bash
 npm run check
+npm test
 npm pack --dry-run
-git add package.json README.md LICENSE .gitignore bin assets docs .github CONTRIBUTING.md SECURITY.md CHANGELOG.md CODE_OF_CONDUCT.md
+git add package.json README.md LICENSE .gitignore bin assets docs test .github CONTRIBUTING.md SECURITY.md CHANGELOG.md CODE_OF_CONDUCT.md
 git commit -m "Initial Navo release"
-gh repo create YOUR_GITHUB_USERNAME/navo --public --source=. --remote=origin --push
+gh repo create rebel0789/navo --public --source=. --remote=origin --push
 git tag v0.1.0
 git push origin v0.1.0
 npm login
@@ -40,9 +42,9 @@ After the GitHub repo exists, add real package metadata:
 
 ```bash
 npm pkg set repository.type=git
-npm pkg set repository.url=git+https://github.com/YOUR_GITHUB_USERNAME/navo.git
-npm pkg set bugs.url=https://github.com/YOUR_GITHUB_USERNAME/navo/issues
-npm pkg set homepage=https://github.com/YOUR_GITHUB_USERNAME/navo#readme
+npm pkg set repository.url=git+https://github.com/rebel0789/navo.git
+npm pkg set bugs.url=https://github.com/rebel0789/navo/issues
+npm pkg set homepage=https://github.com/rebel0789/navo#readme
 ```
 
 ## Star Plan

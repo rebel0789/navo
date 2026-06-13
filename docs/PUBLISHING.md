@@ -7,7 +7,7 @@ This guide covers the first public GitHub and npm release.
 Run:
 
 ```bash
-npm run check
+npm run prepublishOnly
 npm pack --dry-run
 ```
 
@@ -41,13 +41,13 @@ With GitHub CLI:
 git init
 git add package.json README.md LICENSE .gitignore bin assets docs .github CONTRIBUTING.md SECURITY.md CHANGELOG.md CODE_OF_CONDUCT.md
 git commit -m "Initial Navo release"
-gh repo create YOUR_GITHUB_USERNAME/navo --public --source=. --remote=origin --push
+gh repo create rebel0789/navo --public --source=. --remote=origin --push
 ```
 
 Or create the repo on GitHub, then:
 
 ```bash
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/navo.git
+git remote add origin https://github.com/rebel0789/navo.git
 git branch -M main
 git push -u origin main
 ```
@@ -56,17 +56,17 @@ After the remote exists, write real npm metadata:
 
 ```bash
 npm pkg set repository.type=git
-npm pkg set repository.url=git+https://github.com/YOUR_GITHUB_USERNAME/navo.git
-npm pkg set bugs.url=https://github.com/YOUR_GITHUB_USERNAME/navo/issues
-npm pkg set homepage=https://github.com/YOUR_GITHUB_USERNAME/navo#readme
+npm pkg set repository.url=git+https://github.com/rebel0789/navo.git
+npm pkg set bugs.url=https://github.com/rebel0789/navo/issues
+npm pkg set homepage=https://github.com/rebel0789/navo#readme
 ```
 
 ## 3. Prepare npm
 
-The public package name `navo` appeared available when checked before launch. Verify again right before publishing:
+Publish under the owner scope to avoid npm package-name similarity blocks:
 
 ```bash
-npm view navo name version
+npm view @rebel0x/navo name version
 ```
 
 If npm returns `404`, publish:
@@ -76,12 +76,7 @@ npm login
 npm publish --access public
 ```
 
-If the name is taken, switch to a scoped package:
-
-```bash
-npm pkg set name="@YOUR_NPM_USERNAME/navo"
-npm publish --access public
-```
+`prepublishOnly` runs automatically during `npm publish`, so a broken parser check or failing test blocks the release.
 
 ## 4. Tag A Release
 
@@ -94,10 +89,17 @@ Create a GitHub Release from `v0.1.0` with the changelog notes.
 
 ## 5. Smoke Test
 
-Install from npm:
+Run without a global install:
 
 ```bash
-npm install -g navo
+npx -y @rebel0x/navo@latest help
+npx -y @rebel0x/navo@latest ui
+```
+
+Or install from npm:
+
+```bash
+npm install -g @rebel0x/navo
 navo help
 navo ui
 ```

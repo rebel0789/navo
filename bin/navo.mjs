@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -19,6 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const PROJECT_NAME = "Navo";
 const VERSION = "0.1.0";
+const GITHUB_REPO_URL = "https://github.com/rebel0789/navo";
 const PROVIDER_ID = "opencode-go";
 const PROVIDER_NAME = "OpenCode Go";
 const OPENCODE_BASE_URL = process.env.OCGO_UPSTREAM_BASE_URL || "https://opencode.ai/zen/go/v1";
@@ -26,11 +28,19 @@ const MODELS_URL = `${OPENCODE_BASE_URL}/models`;
 const DEFAULT_MODEL = "deepseek-v4-flash";
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const DEFAULT_CLAUDE_TEST_MODEL = "minimax-m3";
+const CODEX_APP_NAME = "Codex";
+const CODEX_RESTART_TIMEOUT_MS = 8_000;
 const DEFAULT_PROXY_PORT = 17853;
 const DEFAULT_UI_PORT = 17854;
 const MODEL_CATALOG_FILENAME = "navo-models.json";
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_PROOF_FRESH_SECONDS = 300;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 120_000;
+const DEFAULT_PROXY_BODY_LIMIT_BYTES = 20 * 1024 * 1024;
+const UI_BODY_LIMIT_BYTES = 256 * 1024;
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+const UI_SESSION_HEADER = "x-navo-token";
 const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
 const APPROVAL_POLICIES = ["untrusted", "on-request", "on-failure", "never"];
 const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"];
@@ -50,24 +60,35 @@ const CLI_NAME = INVOKED_NAME === "navo" ? INVOKED_NAME : "navo";
 const MAX_REASONING_CACHE_ENTRIES = 500;
 const reasoningContentByToolCallId = new Map();
 
+const OPENCODE_MODEL_METADATA = new Map([
+  ["deepseek-v4-flash", { name: "DeepSeek V4 Flash", note: "Default fast execution model", endpoint: "chat" }],
+  ["deepseek-v4-pro", { name: "DeepSeek V4 Pro", note: "Deep coding/reasoning option", endpoint: "chat" }],
+  ["glm-5.1", { name: "GLM-5.1", note: "Strong planning/chat pick", endpoint: "chat" }],
+  ["glm-5", { name: "GLM-5", note: "Previous GLM fallback", endpoint: "chat" }],
+  ["kimi-k2.7-code", { name: "Kimi K2.7 Code", note: "Current Kimi coding model", endpoint: "chat" }],
+  ["kimi-k2.6", { name: "Kimi K2.6", note: "Strong agent/execution option", endpoint: "chat" }],
+  ["mimo-v2.5-pro", { name: "MiMo V2.5 Pro", note: "MiMo stronger option", endpoint: "chat" }],
+  ["mimo-v2.5", { name: "MiMo V2.5", note: "MiMo fast option", endpoint: "chat" }],
+  ["minimax-m3", { name: "MiniMax M3", note: "MiniMax flagship option", endpoint: "messages" }],
+  ["minimax-m2.7", { name: "MiniMax M2.7", note: "MiniMax fast option", endpoint: "messages" }],
+  ["minimax-m2.5", { name: "MiniMax M2.5", note: "MiniMax fallback option", endpoint: "messages" }],
+  ["qwen3.7-max", { name: "Qwen3.7 Max", note: "Top Qwen reasoning option", endpoint: "messages" }],
+  ["qwen3.7-plus", { name: "Qwen3.7 Plus", note: "High-value Qwen option", endpoint: "messages" }],
+  ["qwen3.6-plus", { name: "Qwen3.6 Plus", note: "Qwen long-context option", endpoint: "messages" }]
+]);
+
+const OPENCODE_MODEL_ALIASES = new Map([
+  ["kimi-k2.7", "kimi-k2.7-code"]
+]);
+
 const CODEX_CHAT_MODELS = new Map([
-  ["deepseek-v4-flash", "Default fast execution model"],
-  ["kimi-k2.6", "Strong agent/execution option"],
-  ["glm-5.1", "Strong planning/chat pick"],
-  ["deepseek-v4-pro", "Deep coding/reasoning option"],
-  ["kimi-k2.5", "Previous Kimi fallback"],
-  ["glm-5", "Previous GLM fallback"],
-  ["mimo-v2.5-pro", "MiMo stronger option"],
-  ["mimo-v2.5", "MiMo fast option"]
+  ...[...OPENCODE_MODEL_METADATA.entries()].map(([id, metadata]) => [id, metadata.note])
 ]);
 
 const ANTHROPIC_ONLY_DOC_MODELS = new Set([
-  "minimax-m3",
-  "minimax-m2.7",
-  "minimax-m2.5",
-  "qwen3.7-max",
-  "qwen3.7-plus",
-  "qwen3.6-plus"
+  ...[...OPENCODE_MODEL_METADATA.entries()]
+    .filter(([, metadata]) => metadata.endpoint === "messages")
+    .map(([id]) => id)
 ]);
 
 async function main() {
@@ -98,7 +119,7 @@ async function main() {
       case "use":
         configure(options);
         await startProxy(options);
-        console.log("OpenCode Go is active. Restart Codex App or start a new Codex CLI session.");
+        console.log("OpenCode Go is active. Open a new Codex chat/session to load the saved provider.");
         break;
       case "app":
       case "launch":
@@ -132,7 +153,7 @@ async function main() {
       case "off":
         restore(options);
         stopProxy();
-        console.log("OpenCode Go is off. Restart Codex App or start a new Codex CLI session.");
+        console.log("OpenCode Go is off. Open a new Codex chat/session to load the saved provider.");
         break;
       case "restore":
         restore(options);
@@ -145,7 +166,7 @@ async function main() {
         await verify(options);
         break;
       case "models":
-        await listModels();
+        await listModels(options);
         break;
       case "model":
       case "select":
@@ -287,7 +308,7 @@ Advanced:
   ${CLI_NAME} probe-routing
   ${CLI_NAME} restore [--backup <path>]
   ${CLI_NAME} backups
-  ${CLI_NAME} models
+  ${CLI_NAME} models [--all]
 
 How it works:
   - Codex currently uses the Responses API for custom providers.
@@ -355,19 +376,36 @@ function configure(options) {
   console.log(`Start OpenCode mode with "${CLI_NAME} proxy-start", or use "${CLI_NAME} app" to start it and open Codex.`);
 }
 
-function launchCodex() {
-  const result = process.platform === "darwin"
-    ? spawnSync("open", ["-a", "Codex"], { encoding: "utf8" })
-    : spawnSync("codex", ["app"], { encoding: "utf8" });
+function launchCodex({ preferActivate = true } = {}) {
+  if (process.platform === "darwin") {
+    if (preferActivate) {
+      const activated = spawnSync("osascript", ["-e", `tell application "${CODEX_APP_NAME}" to activate`], {
+        encoding: "utf8"
+      });
+      if (!activated.error && activated.status === 0) {
+        console.log("Activated Codex App.");
+        return;
+      }
+    }
 
+    const result = spawnSync("open", ["-a", CODEX_APP_NAME], { encoding: "utf8" });
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      throw new Error((result.stderr || result.stdout || "Failed to launch Codex.").trim());
+    }
+    console.log("Launched Codex App.");
+    return;
+  }
+
+  const result = spawnSync("codex", ["app"], { encoding: "utf8" });
   if (result.error) {
     throw result.error;
   }
-
   if (result.status !== 0) {
     throw new Error((result.stderr || result.stdout || "Failed to launch Codex.").trim());
   }
-
   console.log("Launched Codex App.");
 }
 
@@ -454,6 +492,7 @@ async function buildState(options = {}) {
       logPath: activeLogPath(),
       pidFiles: connectionPidFiles()
     },
+    contextWindow: opencodeModelContextWindow(model),
     models: modelOptions(model, routing),
     codexModels: codexModelOptions(model),
     logs: recentLogLines(80),
@@ -464,6 +503,44 @@ async function buildState(options = {}) {
   };
   state.safety = safetyReport(state);
   return state;
+}
+
+function contextWindowLabel(tokens) {
+  if (!Number.isFinite(tokens) || tokens <= 0) {
+    return "Unknown";
+  }
+  if (tokens >= 1_000_000) {
+    return `${Math.round(tokens / 100_000) / 10}M`;
+  }
+  if (tokens >= 1_000) {
+    return `${Math.round(tokens / 1_000)}K`;
+  }
+  return String(tokens);
+}
+
+function opencodeModelMetadata(model) {
+  return OPENCODE_MODEL_METADATA.get(normalizeModel(String(model || "").trim())) || null;
+}
+
+function opencodeModelContextWindow(model) {
+  const metadata = opencodeModelMetadata(model);
+  const tokens = metadata?.contextWindow;
+  if (!Number.isFinite(tokens) || tokens <= 0) {
+    return null;
+  }
+  return {
+    tokens,
+    label: contextWindowLabel(tokens),
+    source: "OpenCode docs"
+  };
+}
+
+function opencodeModelEndpoint(model) {
+  return opencodeModelMetadata(model)?.endpoint === "messages" ? "messages" : "chat";
+}
+
+function opencodeEndpointPath(model) {
+  return opencodeModelEndpoint(model) === "messages" ? "/messages" : "/chat/completions";
 }
 
 function readCodexSettings(text) {
@@ -477,7 +554,9 @@ function readCodexSettings(text) {
 function modelOptions(activeModel, routing) {
   return [...CODEX_CHAT_MODELS.entries()].map(([id, note]) => ({
     id,
+    name: opencodeModelMetadata(id)?.name || id,
     note,
+    contextWindow: opencodeModelContextWindow(id),
     active: id === activeModel,
     routeChat: routing?.enabled && routing.chatModel === id,
     routeAgent: routing?.enabled && routing.agentModel === id
@@ -554,7 +633,7 @@ async function verify(options) {
   }
 
   if (!state.safety.ready || (requireFresh && !proofFresh)) {
-    console.log(`Fix: ${CLI_NAME} guard --fix && restart Codex App or start a new Codex session.`);
+    console.log(`Fix: ${CLI_NAME} guard --fix && open a new Codex session.`);
     if (requireFresh) {
       console.log(`Then run: ${CLI_NAME} probe-routing && ${CLI_NAME} verify --fresh`);
     }
@@ -618,7 +697,7 @@ function latestOpenCodeProof() {
   const line = [...logs].reverse().find((entry) =>
     entry.includes("status=200") &&
     entry.includes("upstream_host=opencode.ai") &&
-    entry.includes("upstream_path=/chat/completions")
+    (entry.includes("upstream_path=/chat/completions") || entry.includes("upstream_path=/messages"))
   ) || "";
   const at = parseLogTimestamp(line);
   const ageSeconds = at ? Math.max(0, Math.round((Date.now() - at.getTime()) / 1000)) : null;
@@ -667,8 +746,17 @@ function latestOpenCodeRequestLine() {
   return latestOpenCodeProof().line;
 }
 
-async function listModels() {
-  const response = await fetch(MODELS_URL);
+async function listModels(options = {}) {
+  if (!options.all) {
+    for (const [id, metadata] of OPENCODE_MODEL_METADATA.entries()) {
+      const endpoint = metadata.endpoint === "messages" ? "messages" : "chat-completions";
+      console.log(`* ${id}  ${metadata.name} (${endpoint})`);
+    }
+    console.log(`Source: OpenCode Go documentation. Run "${CLI_NAME} models --all" to inspect the live /models endpoint.`);
+    return;
+  }
+
+  const response = await fetchWithTimeout(MODELS_URL);
   if (!response.ok) {
     throw new Error(`Failed to fetch models: HTTP ${response.status}`);
   }
@@ -677,13 +765,11 @@ async function listModels() {
   const models = Array.isArray(body.data) ? body.data : [];
   for (const item of models) {
     const id = item.id;
-    const compatible = CODEX_CHAT_MODELS.has(id);
-    const note = compatible
-      ? "Codex OpenCode-compatible"
-      : ANTHROPIC_ONLY_DOC_MODELS.has(id)
-        ? "documented for Anthropic messages endpoint"
-        : "check OpenCode docs before using with Codex";
-    console.log(`${compatible ? "*" : "-"} ${id}  ${note}`);
+    const metadata = opencodeModelMetadata(id);
+    const note = metadata
+      ? `${metadata.name} (${metadata.endpoint === "messages" ? "messages" : "chat-completions"})`
+      : "not in Navo's docs-backed selector; verify OpenCode docs before using";
+    console.log(`${metadata ? "*" : "-"} ${id}  ${note}`);
   }
 }
 
@@ -731,7 +817,7 @@ function switchModel(model, options) {
   configure({ ...options, model });
   console.log(`Selected OpenCode Go model: ${model}`);
   console.log("Single-model mode selected; split chat/agent routing is disabled.");
-  console.log("Restart Codex App or start a new thread/session for the change to take effect.");
+  console.log("Open a new Codex chat/session for the saved model to take effect.");
 }
 
 function switchToCodexModel(model, options = {}) {
@@ -750,7 +836,7 @@ function switchToCodexModel(model, options = {}) {
 
   console.log(`Selected Codex native model: ${model}.`);
   console.log(`Backup: ${backupPath}`);
-  console.log("Restart Codex App or start a new thread/session for the change to take effect.");
+  console.log("Open a new Codex chat/session for the saved model to take effect.");
 }
 
 async function routeModels(options) {
@@ -814,18 +900,17 @@ async function testOpenCodeToken(token, model = DEFAULT_MODEL) {
     throw new Error("Enter an OpenCode API key first.");
   }
 
-  const response = await fetch(`${OPENCODE_BASE_URL}/chat/completions`, {
+  const endpoint = opencodeModelEndpoint(selectedModel);
+  const requestBody = {
+    model: selectedModel,
+    messages: [{ role: "user", content: "Reply with exactly: ok" }],
+    max_tokens: 8,
+    stream: false
+  };
+  const response = await fetchWithTimeout(`${OPENCODE_BASE_URL}${opencodeEndpointPath(selectedModel)}`, {
     method: "POST",
-    headers: {
-      "authorization": `Bearer ${token}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      model: selectedModel,
-      messages: [{ role: "user", content: "Reply with exactly: ok" }],
-      max_tokens: 8,
-      stream: false
-    })
+    headers: openCodeRequestHeaders(token, endpoint),
+    body: JSON.stringify(endpoint === "messages" ? chatCompletionsToAnthropicMessages(requestBody) : requestBody)
   });
 
   const text = await response.text();
@@ -834,7 +919,8 @@ async function testOpenCodeToken(token, model = DEFAULT_MODEL) {
   }
 
   try {
-    return JSON.parse(text);
+    const json = JSON.parse(text);
+    return endpoint === "messages" ? anthropicMessageToChatCompletion(json, requestBody) : json;
   } catch {
     return { raw: text };
   }
@@ -902,7 +988,7 @@ async function probeRouting(options) {
 async function postProxyResponse(options, body) {
   const port = readPort(options);
   const token = readStoredToken();
-  const response = await fetch(`${proxyBaseUrl(port)}/responses`, {
+  const response = await fetchWithTimeout(`${proxyBaseUrl(port)}/responses`, {
     method: "POST",
     headers: {
       "authorization": `Bearer ${token}`,
@@ -924,7 +1010,7 @@ async function probeClaude(options) {
   validateClaudeModel(model, Boolean(options.force));
   const token = readStoredToken();
 
-  const response = await fetch(`${OPENCODE_BASE_URL}/messages`, {
+  const response = await fetchWithTimeout(`${OPENCODE_BASE_URL}/messages`, {
     method: "POST",
     headers: {
       "authorization": `Bearer ${token}`,
@@ -974,9 +1060,18 @@ async function runUi(options) {
   const uiPort = readUiPort(options);
   const opencodeOptions = { ...options, port: options["opencode-port"] || DEFAULT_PROXY_PORT };
   const url = `http://127.0.0.1:${uiPort}`;
+  const uiSecurity = {
+    token: createSessionToken(),
+    allowedOrigins: new Set([
+      `http://127.0.0.1:${uiPort}`,
+      `http://localhost:${uiPort}`
+    ])
+  };
+
+  ensurePrivateAppDir();
 
   const server = http.createServer((req, res) => {
-    handleUiRequest(req, res, opencodeOptions).catch((error) => {
+    handleUiRequest(req, res, opencodeOptions, uiSecurity).catch((error) => {
       sendUiError(res, error);
     });
   });
@@ -986,7 +1081,7 @@ async function runUi(options) {
     server.listen(uiPort, "127.0.0.1", resolve);
   });
 
-  writeFileSync(UI_PID_PATH, `${process.pid}\n`, "utf8");
+  writePrivateFile(UI_PID_PATH, `${process.pid}\n`);
   console.log(`${PROJECT_NAME} dashboard: ${url}`);
   console.log(`OpenCode local endpoint: ${proxyBaseUrl(readPort(opencodeOptions))}`);
   if (!options.foreground) {
@@ -1026,8 +1121,9 @@ async function startUi(options) {
     return;
   }
 
-  mkdirSync(APP_DIR, { recursive: true });
+  ensurePrivateAppDir();
   const logFd = openSync(UI_LOG_PATH, "a");
+  chmodBestEffort(UI_LOG_PATH, PRIVATE_FILE_MODE);
   const args = [
     SCRIPT_PATH,
     "ui-server",
@@ -1044,7 +1140,7 @@ async function startUi(options) {
   });
   child.unref();
   closeSync(logFd);
-  writeFileSync(UI_PID_PATH, `${child.pid}\n`, "utf8");
+  writePrivateFile(UI_PID_PATH, `${child.pid}\n`);
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await sleep(125);
@@ -1115,11 +1211,11 @@ async function uiHealth(port) {
   }
 }
 
-async function handleUiRequest(req, res, opencodeOptions) {
+async function handleUiRequest(req, res, opencodeOptions, uiSecurity) {
   const url = new URL(req.url || "/", "http://127.0.0.1");
 
   if (req.method === "GET" && url.pathname === "/") {
-    sendHtml(res, dashboardHtmlV2());
+    sendHtml(res, dashboardHtmlV2(uiSecurity.token));
     return;
   }
 
@@ -1149,7 +1245,8 @@ async function handleUiRequest(req, res, opencodeOptions) {
     return;
   }
 
-  const body = await readJsonBody(req);
+  verifyUiMutationRequest(req, uiSecurity);
+  const body = await readJsonBody(req, UI_BODY_LIMIT_BYTES);
 
   switch (url.pathname) {
     case "/api/key":
@@ -1230,9 +1327,7 @@ async function handleUiRequest(req, res, opencodeOptions) {
         configure({ ...opencodeOptions, model: uiOpenCodeModel(body) });
         await startProxy(opencodeOptions);
         if (body.restartCodex) {
-          quitCodexApp({ quiet: true });
-          await sleep(650);
-          launchCodex();
+          await restartCodexApp();
         }
       });
       return;
@@ -1305,9 +1400,7 @@ async function handleUiRequest(req, res, opencodeOptions) {
       return;
     case "/api/restart-codex":
       await uiAction(res, opencodeOptions, async () => {
-        quitCodexApp({ quiet: true });
-        await sleep(650);
-        launchCodex();
+        await restartCodexApp();
       });
       return;
     case "/api/restore":
@@ -1315,7 +1408,7 @@ async function handleUiRequest(req, res, opencodeOptions) {
         if (!body.backup) {
           throw new Error("Choose a backup first.");
         }
-        restore({ ...opencodeOptions, backup: body.backup });
+        restore({ ...opencodeOptions, backup: knownRestoreBackupPath(body.backup) });
       });
       return;
     default:
@@ -1331,9 +1424,7 @@ async function restartCodexIfRequested(body) {
   if (!body.restartCodex) {
     return;
   }
-  quitCodexApp({ quiet: true });
-  await sleep(650);
-  launchCodex();
+  await restartCodexApp();
 }
 
 async function testAndRecordOpenCodeToken(token, model) {
@@ -1344,7 +1435,7 @@ async function testAndRecordOpenCodeToken(token, model) {
     model,
     requested_model: model,
     upstream_host: upstreamHost(),
-    upstream_path: "/chat/completions",
+    upstream_path: opencodeEndpointPath(model),
     upstream_model: upstreamModel
   });
   return { json, upstreamModel };
@@ -1366,10 +1457,55 @@ function sendUiError(res, error) {
   });
 }
 
+function createSessionToken() {
+  return randomBytes(32).toString("base64url");
+}
+
+function verifyUiMutationRequest(req, uiSecurity) {
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  if (!contentType.startsWith("application/json")) {
+    throw httpError(415, "Dashboard actions require application/json.");
+  }
+
+  const secFetchSite = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+  if (secFetchSite && !["same-origin", "same-site", "none"].includes(secFetchSite)) {
+    throw httpError(403, "Rejected cross-site dashboard request.");
+  }
+
+  const origin = req.headers.origin ? String(req.headers.origin) : "";
+  if (origin && !uiSecurity.allowedOrigins.has(origin)) {
+    throw httpError(403, "Rejected dashboard request from another origin.");
+  }
+
+  const supplied = String(req.headers[UI_SESSION_HEADER] || "");
+  if (!timingSafeEqualString(supplied, uiSecurity.token)) {
+    throw httpError(403, "Missing or invalid dashboard session token.");
+  }
+}
+
+function timingSafeEqualString(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function knownRestoreBackupPath(path) {
+  const requested = String(path || "");
+  const known = backupSummaries().find((backup) => backup.restoreable && backup.path === requested);
+  if (!known) {
+    throw httpError(400, "Choose a known Navo backup from the restore list.");
+  }
+  return known.path;
+}
+
 function sendHtml(res, html) {
   res.writeHead(200, {
     "content-type": "text/html; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
+    "content-security-policy": "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY"
   });
   res.end(html);
 }
@@ -1377,7 +1513,8 @@ function sendHtml(res, html) {
 function sendSvg(res, svg) {
   res.writeHead(200, {
     "content-type": "image/svg+xml; charset=utf-8",
-    "cache-control": "public, max-age=86400"
+    "cache-control": "public, max-age=86400",
+    "x-content-type-options": "nosniff"
   });
   res.end(svg);
 }
@@ -1427,8 +1564,8 @@ function recentlyOpenedUi(url) {
 }
 
 function rememberUiOpened(url) {
-  mkdirSync(APP_DIR, { recursive: true });
-  writeFileSync(uiOpenMarkerPath(url), `${JSON.stringify({ url, openedAt: Date.now() }, null, 2)}\n`, "utf8");
+  ensurePrivateAppDir();
+  writePrivateFile(uiOpenMarkerPath(url), `${JSON.stringify({ url, openedAt: Date.now() }, null, 2)}\n`);
 }
 
 function quitCodexApp({ quiet = false } = {}) {
@@ -1436,7 +1573,7 @@ function quitCodexApp({ quiet = false } = {}) {
     throw new Error("Codex App controls are only available on macOS.");
   }
 
-  const result = spawnSync("osascript", ["-e", 'tell application "Codex" to quit'], {
+  const result = spawnSync("osascript", ["-e", `tell application "${CODEX_APP_NAME}" to quit`], {
     encoding: "utf8"
   });
   if (result.error) {
@@ -1450,17 +1587,56 @@ function quitCodexApp({ quiet = false } = {}) {
   }
 }
 
-function dashboardHtmlV2() {
-  const models = JSON.stringify([...CODEX_CHAT_MODELS.entries()].map(([id, note]) => ({ id, note })));
+async function restartCodexApp() {
+  if (process.env.NAVO_SKIP_CODEX_RESTART === "1") {
+    console.log("Skipped Codex App restart because NAVO_SKIP_CODEX_RESTART=1.");
+    return;
+  }
+  if (process.platform !== "darwin") {
+    launchCodex();
+    return;
+  }
+
+  quitCodexApp({ quiet: true });
+  await waitForCodexExit(CODEX_RESTART_TIMEOUT_MS);
+  launchCodex({ preferActivate: true });
+}
+
+async function waitForCodexExit(timeoutMs) {
+  const startedAt = Date.now();
+  while (isCodexAppRunning()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("Timed out waiting for Codex App to quit. Quit Codex manually, then open it again.");
+    }
+    await sleep(150);
+  }
+}
+
+function isCodexAppRunning() {
+  if (process.platform !== "darwin") {
+    return false;
+  }
+  const result = spawnSync("pgrep", ["-x", CODEX_APP_NAME], { encoding: "utf8" });
+  if (result.error) {
+    return false;
+  }
+  return result.status === 0;
+}
+
+function dashboardHtmlV2(sessionToken) {
+  const models = JSON.stringify(modelOptions("", { enabled: false }));
   const reasoningEfforts = JSON.stringify(REASONING_EFFORTS);
   const approvalPolicies = JSON.stringify(APPROVAL_POLICIES);
   const sandboxModes = JSON.stringify(SANDBOX_MODES);
+  const sessionHeader = JSON.stringify(UI_SESSION_HEADER);
+  const sessionValue = JSON.stringify(sessionToken);
 
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="navo-session-token" content="${htmlAttr(sessionToken)}">
   <title>${PROJECT_NAME}</title>
   <style>
     :root {
@@ -1482,6 +1658,7 @@ function dashboardHtmlV2() {
     }
 
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html { scroll-behavior: smooth; }
     body {
       margin: 0;
@@ -1587,16 +1764,39 @@ function dashboardHtmlV2() {
       font-weight: 700;
     }
 
-    .nav button.active {
-      color: var(--ink);
-      background: #eef2f5;
-    }
+	    .nav button.active {
+	      color: var(--ink);
+	      background: #eef2f5;
+	    }
+
+	    .configured #setup-nav-btn,
+	    .setup-required #settings-btn {
+	      display: none;
+	    }
 
     .top-actions {
       display: inline-flex;
       gap: 8px;
       justify-content: flex-end;
+      align-items: center;
     }
+
+    .top-link {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      padding: 0 12px;
+      color: var(--ink);
+      background: #fff;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .top-link:hover { border-color: #7f909b; }
 
     .view { display: none; }
     .view.active { display: block; }
@@ -2223,10 +2423,10 @@ function dashboardHtmlV2() {
       align-items: center;
     }
 
-    .stored-line strong, .bottom-key-bar strong {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      overflow-wrap: anywhere;
-    }
+	    .stored-line strong {
+	      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	      overflow-wrap: anywhere;
+	    }
 
     .link-button {
       min-height: 30px;
@@ -2251,6 +2451,12 @@ function dashboardHtmlV2() {
     .setup-foot strong {
       color: var(--ink);
       font-size: 14px;
+    }
+
+    .setup-foot a {
+      color: var(--ink);
+      font-weight: 800;
+      text-decoration: none;
     }
 
     .status-card, .model-card {
@@ -2292,9 +2498,33 @@ function dashboardHtmlV2() {
       align-items: baseline;
     }
 
-    .status-list.compact div {
-      grid-template-columns: 130px minmax(0, 1fr);
-    }
+	    .status-list.compact div {
+	      grid-template-columns: 130px minmax(0, 1fr);
+	    }
+
+	    .model-picker-grid {
+	      display: grid;
+	      grid-template-columns: repeat(2, minmax(0, 1fr));
+	      gap: 10px;
+	    }
+
+	    .model-picker-grid.single {
+	      grid-template-columns: 1fr;
+	    }
+
+	    .model-select-block {
+	      display: grid;
+	      gap: 6px;
+	      color: var(--muted);
+	      font-size: 12px;
+	      font-weight: 760;
+	    }
+
+	    .model-action-row {
+	      display: grid;
+	      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	      gap: 10px;
+	    }
 
     dt {
       color: var(--muted);
@@ -2308,25 +2538,25 @@ function dashboardHtmlV2() {
       overflow-wrap: anywhere;
     }
 
-    .action-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 14px;
-      margin-top: 14px;
-    }
+	    .action-grid {
+	      display: grid;
+	      grid-template-columns: repeat(3, minmax(0, 1fr));
+	      gap: 10px;
+	      margin-top: 14px;
+	    }
 
-    .action-card {
-      min-height: 138px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface-soft);
-      padding: 14px;
-      display: grid;
-      justify-items: center;
-      align-content: center;
-      gap: 8px;
-      text-align: center;
-    }
+	    .action-card {
+	      min-height: 102px;
+	      border: 1px solid var(--line);
+	      border-radius: 8px;
+	      background: var(--surface-soft);
+	      padding: 14px;
+	      display: grid;
+	      justify-items: start;
+	      align-content: start;
+	      gap: 8px;
+	      text-align: left;
+	    }
 
     .action-card strong {
       font-size: 13px;
@@ -2338,38 +2568,21 @@ function dashboardHtmlV2() {
       line-height: 1.35;
     }
 
-    .action-card em {
-      min-height: 24px;
-      border-radius: 999px;
-      background: #edf2f5;
-      color: var(--muted);
-      padding: 3px 9px;
-      font-style: normal;
-      font-size: 12px;
-      font-weight: 760;
-    }
+	    .action-card em {
+	      justify-self: start;
+	      min-height: 24px;
+	      border-radius: 999px;
+	      background: #edf2f5;
+	      color: var(--muted);
+	      padding: 3px 9px;
+	      font-style: normal;
+	      font-size: 12px;
+	      font-weight: 760;
+	    }
 
     .action-card.active em {
       background: #dff5e9;
       color: var(--green);
-    }
-
-    .bottom-key-bar {
-      min-height: 58px;
-      margin-top: 22px;
-      border-top: 1px solid var(--line);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      justify-content: flex-end;
-      align-items: center;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .bottom-key-bar span:first-child {
-      color: var(--ink);
-      font-weight: 760;
     }
 
     .toast {
@@ -2391,28 +2604,27 @@ function dashboardHtmlV2() {
 
     .toast.show { opacity: 1; transform: translateY(0); }
 
-    @media (max-width: 900px) {
-      .app { width: min(100vw - 24px, 1320px); }
-      .topbar, .hero, .shell, .status-strip, .form-grid, .setup-grid, .mode-buttons, .model-grid, .doc-shell, .action-grid {
-        grid-template-columns: 1fr;
-      }
-      .topbar { position: static; padding: 10px 0; }
-      .nav, .top-actions { justify-content: flex-start; }
-      h1 { font-size: 28px; }
+	    @media (max-width: 900px) {
+	      .app { width: min(100vw - 24px, 1320px); }
+	      .topbar, .hero, .shell, .status-strip, .form-grid, .setup-grid, .mode-buttons, .model-grid, .model-picker-grid, .model-action-row, .doc-shell, .action-grid {
+	        grid-template-columns: 1fr;
+	      }
+	      .topbar { position: static; padding: 10px 0; }
+	      .nav, .top-actions { justify-content: flex-start; }
+	      h1 { font-size: 28px; }
       .trust-grid { grid-template-columns: 1fr; }
       .doc-nav { border-right: 0; border-bottom: 1px solid var(--line); }
       .doc-content { padding: 18px; }
-      .activity-meta { grid-template-columns: 1fr; }
-      .setup-card { padding: 20px 16px; }
-      .setup-foot { margin: 0 -16px -20px; }
-      .bottom-key-bar { justify-content: flex-start; }
-      .activity-row {
-        min-width: 620px;
-      }
+	      .activity-meta { grid-template-columns: 1fr; }
+	      .setup-card { padding: 20px 16px; }
+	      .setup-foot { margin: 0 -16px -20px; }
+	      .activity-row {
+	        min-width: 620px;
+	      }
     }
   </style>
 </head>
-<body>
+<body class="setup-required">
   <div class="app">
     <header class="topbar">
       <div class="brand">
@@ -2421,16 +2633,17 @@ function dashboardHtmlV2() {
             <path d="M5 12h4.4c1.5 0 2.1-3.3 3.6-3.3s2.1 6.6 3.6 6.6S18.7 12 20 12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
             <path d="M8 6 3 12l5 6M16 6l5 6-5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-        </div>
-        <strong>Navo</strong>
-      </div>
-      <nav class="nav" aria-label="Primary">
-        <button class="nav-item active" data-view="setup">Setup</button>
-        <button class="nav-item" data-view="control">Control</button>
-        <button class="nav-item" data-view="activity">Activity</button>
-        <button class="nav-item" data-view="docs">Docs</button>
+	        </div>
+	        <strong>Navo</strong>
+	      </div>
+	      <nav class="nav" aria-label="Primary">
+	        <button id="setup-nav-btn" class="nav-item active" data-view="setup">Setup</button>
+	        <button class="nav-item" data-view="control">Control</button>
+	        <button class="nav-item" data-view="activity">Activity</button>
+	        <button class="nav-item" data-view="docs">Docs</button>
       </nav>
       <div class="top-actions">
+        <a class="top-link" href="${GITHUB_REPO_URL}" target="_blank" rel="noreferrer">GitHub</a>
         <button id="refresh-btn">Refresh</button>
         <button id="settings-btn" title="Settings">Settings</button>
       </div>
@@ -2489,6 +2702,7 @@ function dashboardHtmlV2() {
           <footer class="setup-foot">
             <strong>100% Local • Secure • Private</strong>
             <span>Navo runs locally on your Mac. Nothing leaves your machine except requests to OpenCode.</span>
+            <span><a href="${GITHUB_REPO_URL}" target="_blank" rel="noreferrer">Star Navo on GitHub</a> if it saves you setup time.</span>
           </footer>
         </div>
       </section>
@@ -2504,49 +2718,54 @@ function dashboardHtmlV2() {
             </div>
           </div>
           <p id="status-copy" class="small">Navo is routing Codex requests to OpenCode.</p>
-          <dl class="status-list">
-            <div><dt>Local endpoint</dt><dd id="endpoint-value">-</dd></div>
-            <div><dt>Last check</dt><dd id="last-check-value">-</dd></div>
-            <div><dt>Upstream</dt><dd>opencode.ai</dd></div>
-          </dl>
-          <button id="test-opencode-control-btn">Test Connection</button>
-        </section>
+	          <dl class="status-list">
+	            <div><dt>Mode</dt><dd id="status-provider-value">-</dd></div>
+	            <div><dt>Local bridge</dt><dd id="endpoint-value">-</dd></div>
+	            <div><dt>Last check</dt><dd id="last-check-value">-</dd></div>
+	            <div><dt>Upstream</dt><dd id="upstream-value">-</dd></div>
+	          </dl>
+	          <button id="test-opencode-control-btn">Test Connection</button>
+	        </section>
 
-        <section class="panel model-card">
-          <h2>Active Model</h2>
-          <select id="model-select"></select>
-          <dl class="status-list compact">
-            <div><dt>Provider</dt><dd id="provider-value">-</dd></div>
-            <div><dt>Context window</dt><dd>200K</dd></div>
-            <div><dt>Reasoning</dt><dd id="reasoning-value">-</dd></div>
-            <div><dt>Status</dt><dd id="model-status-value">-</dd></div>
-          </dl>
-          <button id="change-model-btn">Change Model</button>
-        </section>
+	        <section class="panel model-card">
+	          <h2>Active Model</h2>
+	          <div class="model-picker-grid single">
+	            <label class="model-select-block">
+	              <span>OpenCode model</span>
+	              <select id="model-select"></select>
+	            </label>
+	          </div>
+	          <dl class="status-list compact">
+	            <div><dt>Provider</dt><dd id="provider-value">-</dd></div>
+	            <div id="context-row" hidden><dt>Context window</dt><dd id="context-window-value">-</dd></div>
+	            <div><dt>Reasoning</dt><dd id="reasoning-value">-</dd></div>
+	            <div><dt>Status</dt><dd id="model-status-value">-</dd></div>
+	          </dl>
+	          <div class="model-action-row">
+	            <button id="change-model-btn" class="primary">Use OpenCode Mode</button>
+	            <button id="revert-codex-btn">Revert to Codex Mode</button>
+	          </div>
+	        </section>
       </div>
 
       <section class="panel">
         <h2>Actions</h2>
+        <p class="small">Utility actions only. Model switching is handled above.</p>
         <div class="action-grid">
-          <button id="switch-model-btn" class="action-card">
-            <strong>Use OpenCode Mode</strong>
-            <span>Route Codex to OpenCode models</span>
-            <em id="opencode-active-chip">Active</em>
-          </button>
-          <button id="use-codex-btn" class="action-card">
-            <strong>Use Codex Default</strong>
-            <span>Use Codex's default provider</span>
-            <em>Switch</em>
-          </button>
           <button id="open-codex-btn" class="action-card">
             <strong>Open Codex</strong>
-            <span>Launch Codex app</span>
+            <span>Bring Codex forward without closing chats</span>
             <em>Open</em>
+          </button>
+          <button id="restart-bridge-btn" class="action-card">
+            <strong>Restart Bridge</strong>
+            <span>Refresh the local OpenCode connection</span>
+            <em>Restart</em>
           </button>
           <button class="action-card nav-jump" data-view="activity">
             <strong>View Activity</strong>
-            <span>See recent requests and responses</span>
-            <em>View</em>
+            <span>Inspect privacy-safe local request proof</span>
+            <em>View logs</em>
           </button>
         </div>
       </section>
@@ -2561,13 +2780,7 @@ function dashboardHtmlV2() {
         <div id="activity-list" class="activity-table"></div>
       </section>
 
-      <footer class="bottom-key-bar">
-        <span>OpenCode API Key:</span>
-        <strong id="footer-masked-key-value"></strong>
-        <button id="footer-test-opencode-btn">Test</button>
-        <span id="key-store-value">Stored locally</span>
-      </footer>
-    </main>
+	    </main>
 
     <main id="activity-view" class="view">
       <section class="hero">
@@ -2607,40 +2820,40 @@ function dashboardHtmlV2() {
           <a href="#doc-recover">Recover</a>
           <a href="#doc-cli">CLI</a>
         </aside>
-        <article class="doc-content">
-          <section id="doc-start" class="doc-section">
-            <h2>Start</h2>
-            <p>Run the local dashboard and open it in your browser. The dashboard binds to <code>127.0.0.1</code> only.</p>
-            <code class="cmd">navo ui</code>
-            <div class="steps">
-              <div class="step"><p>Paste your OpenCode API key into the Setup page.</p></div>
-              <div class="step"><p>Choose an OpenCode model such as <code>deepseek-v4-flash</code>.</p></div>
-              <div class="step"><p>Click <strong>Test & Continue</strong>, then choose models on the Control page.</p></div>
-            </div>
-          </section>
-          <section id="doc-modes" class="doc-section">
-            <h2>Choose Mode</h2>
-            <p><strong>Codex Native</strong> removes Navo routing and uses the model configured in Codex. <strong>OpenCode Mode</strong> configures Codex to call Navo's local OpenCode-compatible endpoint.</p>
-            <code class="cmd">navo codex-model gpt-5.5
-navo model deepseek-v4-flash</code>
-          </section>
-          <section id="doc-verify" class="doc-section">
-            <h2>Verify</h2>
-            <p>Do not rely on asking the assistant which model it is. Use local proof instead.</p>
-            <code class="cmd">navo probe-routing
-navo verify --fresh
-navo logs --lines 20</code>
-          </section>
-          <section id="doc-logs" class="doc-section">
-            <h2>Activity</h2>
-            <p>Activity rows show request time, model, and result. They never show prompt text, request headers, or API keys.</p>
-          </section>
-          <section id="doc-recover" class="doc-section">
-            <h2>Recover</h2>
-            <p>Switch back to Codex native mode any time. Existing Codex sessions may need a restart to reload settings.</p>
-            <code class="cmd">navo codex-model gpt-5.5
-navo backups
-navo restore --backup /path/to/file.toml</code>
+	        <article class="doc-content">
+	          <section id="doc-start" class="doc-section">
+	            <h2>Start</h2>
+	            <p>Run the local dashboard, paste the OpenCode Go key on Setup, then use Control to choose a Go chat-compatible model. The dashboard binds to <code>127.0.0.1</code> only.</p>
+	            <code class="cmd">navo ui</code>
+	            <div class="steps">
+	              <div class="step"><p>Use <strong>Setup</strong> to save the OpenCode API key locally.</p></div>
+	              <div class="step"><p>Use <strong>Active Model</strong> to choose an OpenCode Go chat-compatible model.</p></div>
+	              <div class="step"><p>Use <strong>Revert to Codex Mode</strong> when you want Codex's native provider path again.</p></div>
+	            </div>
+	          </section>
+	          <section id="doc-modes" class="doc-section">
+	            <h2>Choose Mode</h2>
+	            <p><strong>OpenCode Mode</strong> configures Codex to call Navo's local adapter, which forwards to OpenCode Go chat-completions models. <strong>Codex Mode</strong> removes the Navo provider/catalog and switches Codex back to its normal provider path.</p>
+	            <code class="cmd">navo codex-model gpt-5.5
+	navo model deepseek-v4-flash</code>
+	          </section>
+	          <section id="doc-verify" class="doc-section">
+	            <h2>Verify</h2>
+	            <p>Do not rely on asking the assistant which model it is. Use local proof from the adapter health check, a fresh routing probe, and the privacy-safe activity log.</p>
+	            <code class="cmd">navo probe-routing
+	navo verify --fresh
+	navo logs --lines 20</code>
+	          </section>
+	          <section id="doc-logs" class="doc-section">
+	            <h2>Activity</h2>
+	            <p>Activity rows show request time, model, route, and result. They do not include prompts, request headers, API keys, or upstream error echoes.</p>
+	          </section>
+	          <section id="doc-recover" class="doc-section">
+	            <h2>Recover</h2>
+	            <p>Switch back to Codex mode from Active Model or the CLI. Existing Codex sessions may need a restart or a new chat to reload provider settings.</p>
+	            <code class="cmd">navo codex-model gpt-5.5
+	navo backups
+	navo restore --backup /path/to/file.toml</code>
           </section>
           <section id="doc-cli" class="doc-section">
             <h2>CLI</h2>
@@ -2663,9 +2876,12 @@ navo verify --fresh</code>
     const reasoningEfforts = ${reasoningEfforts};
     const approvalPolicies = ${approvalPolicies};
     const sandboxModes = ${sandboxModes};
+    const navoSessionHeader = ${sessionHeader};
+    const navoSessionToken = ${sessionValue};
     let currentState = null;
     let busyCount = 0;
     let lastTestResult = null;
+    let pendingModelSelection = "";
 
     const $ = (id) => document.getElementById(id);
 
@@ -2682,11 +2898,17 @@ navo verify --fresh</code>
       for (const item of items) {
         const option = document.createElement("option");
         const id = typeof item === "string" ? item : item.id;
-        option.value = id;
-        option.textContent = id;
+	        const label = typeof item === "string" ? item : (item.name || item.id);
+	        option.value = id;
+        option.textContent = label === id ? id : label + " (" + id + ")";
         select.append(option);
       }
       select.value = value || previous || "";
+      if (select.options.length > 0 && select.value !== (value || previous || "")) {
+        select.value = value && [...select.options].some((option) => option.value === value)
+          ? value
+          : select.options[0].value;
+      }
     }
 
     function setText(id, value) {
@@ -2753,7 +2975,7 @@ navo verify --fresh</code>
       try {
         const response = await fetchJson(path, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", [navoSessionHeader]: navoSessionToken },
           body: JSON.stringify(body || {})
         });
         if (!response.json.ok) throw new Error(response.json.error || "Action failed");
@@ -2786,58 +3008,144 @@ navo verify --fresh</code>
       }
     }
 
-    function showView(name, updateHash) {
-      document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === name + "-view"));
-      document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === name));
-      if (updateHash !== false && location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
-    }
+	    function showView(name, updateHash) {
+	      document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === name + "-view"));
+	      document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === name));
+	      if (updateHash !== false && location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+	    }
 
-    function render() {
-      if (!currentState) return;
-      const state = currentState;
-      const activeOpenCodeModel = state.mode === "opencode" && state.codex.model !== "(unset)" ? state.codex.model : "deepseek-v4-flash";
-      const activeCodexModel = state.mode === "codex" && state.codex.model !== "(unset)"
-        ? state.codex.model
-        : ((state.codexModels && state.codexModels[0] && state.codexModels[0].id) || "gpt-5.5");
+	    function modelById(modelId) {
+	      const models = [
+	        ...((currentState && currentState.models) || []),
+	        ...knownModels
+	      ];
+	      return models.find((item) => item && item.id === modelId) || null;
+	    }
 
-      optionList($("model-select"), knownModels, activeOpenCodeModel);
+	    function configuredOpenCodeModel(state) {
+	      const configured = state && state.mode === "opencode" && state.codex.model !== "(unset)"
+	        ? state.codex.model
+	        : "deepseek-v4-flash";
+	      return modelById(configured) ? configured : "deepseek-v4-flash";
+	    }
 
-      const proofFresh = Boolean(state.safety.proof && state.safety.proof.fresh);
-      const openCodeReady = state.mode === "opencode" && state.connection.running && state.key.available;
-      const needsSetup = !state.key.available;
-      document.body.classList.toggle("setup-required", needsSetup);
+	    function selectedOpenCodeModel(state) {
+	      const configured = configuredOpenCodeModel(state);
+	      if (pendingModelSelection && !modelById(pendingModelSelection)) {
+	        pendingModelSelection = "";
+	      }
+	      if (pendingModelSelection && pendingModelSelection === configured) {
+	        pendingModelSelection = "";
+	      }
+	      return pendingModelSelection || configured;
+	    }
 
-      const statusTitle = openCodeReady ? "Active" : (state.key.available ? "Ready to start" : "Setup required");
-      const statusTone = openCodeReady ? "" : (state.key.available ? "warn" : "bad");
-      const lastCheckText = lastTestResult
-        ? "API key active: " + lastTestResult.upstreamModel
-        : state.safety.proof && state.safety.proof.ageSeconds !== null
-        ? (state.safety.proof.fresh ? "OK " : "Stale ") + state.safety.proof.ageSeconds + "s ago"
-        : state.connection.running
-        ? "Proxy reachable"
-        : state.key.available
-        ? "Ready; click Test"
-        : "Add API key";
-      setText("status-title", statusTitle);
-      $("status-title")?.classList.toggle("warn", statusTone === "warn");
-      $("status-title")?.classList.toggle("bad", statusTone === "bad");
-      setText("status-copy", lastTestResult
-        ? "API key active. OpenCode accepted " + lastTestResult.upstreamModel + "."
-        : openCodeReady
-        ? "Navo is routing Codex requests to OpenCode."
-        : (state.key.available ? "Your OpenCode key is saved. Start OpenCode mode when you are ready." : "Add your OpenCode API key on the setup page."));
-      setText("status-mode-pill", state.mode === "opencode" ? "OpenCode mode" : "Codex native");
-      setText("endpoint-value", state.connection.url);
-      setText("last-check-value", lastCheckText);
-      setText("provider-value", state.mode === "opencode" ? "OpenCode" : "Codex Native");
-      setText("reasoning-value", state.codex.settings.model_reasoning_effort || "Codex default");
-      setText("model-status-value", lastTestResult ? "API key active" : openCodeReady ? "Ready" : (state.key.available ? "Key saved" : "Key missing"));
-      $("stored-key-card").classList.toggle("show", state.key.available);
-      setText("setup-masked-key-value", state.key.masked || "(not saved)");
-      setText("footer-masked-key-value", state.key.masked || "(not saved)");
-      setText("key-store-value", state.key.available ? "Stored in " + (state.key.store || "local storage") : "No saved key");
-      setClass("switch-model-btn", "active", state.mode === "opencode");
-      setText("opencode-active-chip", state.mode === "opencode" ? "Active" : "Switch");
+	    function hasDraftModelSelection(state) {
+	      const selected = selectedOpenCodeModelForAction(state);
+	      return Boolean(selected && selected !== configuredOpenCodeModel(state));
+	    }
+
+	    function modelStatusText(state) {
+	      const openCodeReady = state.mode === "opencode" && state.connection.running && state.key.available;
+	      if (hasDraftModelSelection(state)) {
+	        return state.mode === "codex" ? "Ready to switch to OpenCode" : "Ready to switch";
+	      }
+	      return state.mode === "codex"
+	        ? "Codex mode active"
+	        : (lastTestResult ? "API key active" : openCodeReady ? "Ready" : (state.key.available ? "Key saved" : "Key missing"));
+	    }
+
+	    function selectedOpenCodeModelForAction(state) {
+	      const selected = $("model-select")?.value || pendingModelSelection || "";
+	      return modelById(selected) ? selected : selectedOpenCodeModel(state || currentState);
+	    }
+
+	    function providerSwitchNeedsRestart(targetMode) {
+	      return !currentState || currentState.mode !== targetMode;
+	    }
+
+	    async function updatePendingModelSelection() {
+	      const selected = $("model-select")?.value || "";
+	      const configured = configuredOpenCodeModel(currentState);
+	      pendingModelSelection = selected && selected !== configured ? selected : "";
+	      renderSelectedModelDetails();
+	      if (currentState) {
+	        setText("model-status-value", modelStatusText(currentState));
+	      }
+	      if (!pendingModelSelection || !currentState || currentState.mode !== "opencode" || !currentState.key.available) {
+	        return;
+	      }
+	      setText("model-status-value", "Switching...");
+	      const ok = await api("/api/model", { model: pendingModelSelection }, "OpenCode model saved. Existing Navo chats use it on the next request.");
+	      if (ok) {
+	        pendingModelSelection = "";
+	      }
+	    }
+
+	    function renderSelectedModelDetails() {
+	      const selected = $("model-select")?.value || "";
+	      const model = modelById(selected);
+	      const context = model && model.contextWindow;
+	      const contextRow = $("context-row");
+	      if (contextRow) {
+	        contextRow.hidden = !context;
+	      }
+	      if (context) {
+	        setText("context-window-value", context.label + " " + (context.source || "verified metadata"));
+	      }
+	    }
+
+	    function render() {
+	      if (!currentState) return;
+	      const state = currentState;
+	      const activeOpenCodeModel = selectedOpenCodeModel(state);
+
+	      optionList($("model-select"), state.models || knownModels, activeOpenCodeModel);
+	      renderSelectedModelDetails();
+
+	      const openCodeReady = state.mode === "opencode" && state.connection.running && state.key.available;
+	      const needsSetup = !state.key.available;
+	      document.body.classList.toggle("setup-required", needsSetup);
+	      document.body.classList.toggle("configured", state.key.available);
+
+	      const modeLabel = state.mode === "opencode" ? "OpenCode Mode" : "Codex Mode";
+	      const statusTitle = needsSetup
+	        ? "Setup Required"
+	        : state.mode === "opencode"
+	        ? (state.connection.running ? "OpenCode Mode Active" : "OpenCode Mode Needs Bridge")
+	        : "Codex Mode Active";
+	      const statusTone = needsSetup ? "bad" : (state.mode === "opencode" && !state.connection.running ? "warn" : "");
+	      const lastCheckText = lastTestResult
+	        ? "API key active: " + lastTestResult.upstreamModel
+	        : state.safety.proof && state.safety.proof.ageSeconds !== null
+	        ? (state.safety.proof.fresh ? "OK " : "Stale ") + state.safety.proof.ageSeconds + "s ago"
+	        : state.mode === "codex"
+	        ? "Codex mode"
+	        : state.connection.running
+	        ? "Proxy reachable"
+	        : state.key.available
+	        ? "Ready; click Test"
+	        : "Add API key";
+	      setText("status-title", statusTitle);
+	      $("status-title")?.classList.toggle("warn", statusTone === "warn");
+	      $("status-title")?.classList.toggle("bad", statusTone === "bad");
+	      setText("status-copy", lastTestResult
+	        ? "API key active. OpenCode accepted " + lastTestResult.upstreamModel + "."
+	        : state.mode === "codex"
+	        ? "Codex is using its native provider path. The OpenCode bridge is not in the request path."
+	        : openCodeReady
+	        ? "Navo is routing Codex requests to OpenCode through the local bridge."
+	        : (state.key.available ? "Your OpenCode key is saved. Start OpenCode mode when you are ready." : "Add your OpenCode API key on the setup page."));
+	      setText("status-mode-pill", state.mode === "opencode" ? "OpenCode" : "Codex");
+	      setText("status-provider-value", modeLabel);
+	      setText("endpoint-value", state.mode === "opencode" ? state.connection.url : "Codex direct");
+	      setText("last-check-value", lastCheckText);
+	      setText("upstream-value", state.mode === "opencode" ? "opencode.ai" : "Codex provider");
+	      setText("provider-value", state.mode === "opencode" ? "OpenCode" : "Codex Mode");
+	      setText("reasoning-value", "Codex default");
+	      setText("model-status-value", modelStatusText(state));
+	      $("stored-key-card").classList.toggle("show", state.key.available);
+	      setText("setup-masked-key-value", state.key.masked || "(not saved)");
 
       if (needsSetup && !location.hash) {
         showView("setup", false);
@@ -2957,30 +3265,38 @@ navo verify --fresh</code>
 
     on("refresh-btn", "click", refresh);
     on("refresh-logs-btn", "click", refresh);
-    on("settings-btn", "click", () => showView("docs", true));
+    on("settings-btn", "click", () => showView("setup", true));
     on("open-codex-btn", "click", () => api("/api/open-codex", {}, "Opening Codex"));
+    on("restart-bridge-btn", "click", () => api("/api/restart", {}, "Bridge restarted"));
+    on("model-select", "change", updatePendingModelSelection);
     on("setup-test-opencode-btn", "click", () => {
-      api("/api/test-opencode", { apiKey: $("api-key-input").value }, "API key active");
-    });
-    on("footer-test-opencode-btn", "click", () => {
-      api("/api/test-opencode", { apiKey: $("api-key-input").value, model: $("model-select").value }, "API key active");
+      api("/api/test-opencode", { apiKey: $("api-key-input").value, model: selectedOpenCodeModelForAction(currentState) }, "API key active");
     });
     on("test-opencode-control-btn", "click", () => {
-      api("/api/test-opencode", { apiKey: $("api-key-input").value, model: $("model-select").value }, "API key active");
+      api("/api/test-opencode", { apiKey: $("api-key-input").value, model: selectedOpenCodeModelForAction(currentState) }, "API key active");
     });
     on("start-opencode-btn", "click", async () => {
-      const ok = await api("/api/start-opencode", { apiKey: $("api-key-input").value, restartCodex: true }, "Test passed. OpenCode mode started");
+      const shouldRestart = providerSwitchNeedsRestart("opencode");
+      const ok = await api(
+        "/api/start-opencode",
+        { apiKey: $("api-key-input").value, model: selectedOpenCodeModelForAction(currentState), restartCodex: shouldRestart },
+        shouldRestart ? "OpenCode mode started and Codex restarted" : "OpenCode mode saved. Existing Navo chats use it on the next request."
+      );
       if (ok) {
         $("api-key-input").value = "";
         showView("control", true);
       }
     });
-    on("change-model-btn", "click", () => api("/api/model", { model: $("model-select").value, restartCodex: true }, "OpenCode model selected"));
-    on("switch-model-btn", "click", () => api("/api/model", { model: $("model-select").value, restartCodex: true }, "OpenCode mode selected"));
-    on("use-codex-btn", "click", () => {
-      const fallback = currentState && currentState.codexModels && currentState.codexModels[0] && currentState.codexModels[0].id;
-      const model = currentState && currentState.mode === "codex" && currentState.codex.model !== "(unset)" ? currentState.codex.model : (fallback || "gpt-5.5");
-      if (confirm("Switch to Codex native mode?")) api("/api/codex-model", { model, restartCodex: true }, "Codex native mode selected");
+    on("change-model-btn", "click", () => {
+      const shouldRestart = providerSwitchNeedsRestart("opencode");
+      api(
+        "/api/model",
+        { model: selectedOpenCodeModelForAction(currentState), restartCodex: shouldRestart },
+        shouldRestart ? "OpenCode mode selected and Codex restarted" : "OpenCode model saved. Existing Navo chats use it on the next request."
+      );
+    });
+    on("revert-codex-btn", "click", () => {
+      if (confirm("Revert to Codex mode and restart Codex?")) api("/api/codex-model", { model: "gpt-5.5", restartCodex: true }, "Codex mode selected and Codex restarted");
     });
     on("clear-key-btn", "click", () => {
       if (confirm("Clear the locally saved OpenCode API key?")) api("/api/clear-key", {}, "Saved key cleared");
@@ -3010,7 +3326,7 @@ navo verify --fresh</code>
 
 async function runProxy(options) {
   const port = readPort(options);
-  mkdirSync(APP_DIR, { recursive: true });
+  ensurePrivateAppDir();
 
   const server = http.createServer((req, res) => {
     handleProxyRequest(req, res).catch((error) => {
@@ -3028,7 +3344,7 @@ async function runProxy(options) {
     server.listen(port, "127.0.0.1", resolve);
   });
 
-  writeFileSync(PID_PATH, `${process.pid}\n`, "utf8");
+  writePrivateFile(PID_PATH, `${process.pid}\n`);
   logActivity("startup", {
     listen: proxyBaseUrl(port),
     upstream_base: OPENCODE_BASE_URL,
@@ -3058,8 +3374,9 @@ async function startProxy(options) {
     return;
   }
 
-  mkdirSync(APP_DIR, { recursive: true });
+  ensurePrivateAppDir();
   const logFd = openSync(LOG_PATH, "a");
+  chmodBestEffort(LOG_PATH, PRIVATE_FILE_MODE);
   const child = spawn(process.execPath, [SCRIPT_PATH, "proxy", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -3067,7 +3384,7 @@ async function startProxy(options) {
   });
   child.unref();
   closeSync(logFd);
-  writeFileSync(PID_PATH, `${child.pid}\n`, "utf8");
+  writePrivateFile(PID_PATH, `${child.pid}\n`);
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await sleep(125);
@@ -3175,8 +3492,8 @@ function recentLogLines(lines = 100) {
 }
 
 function clearActivityLog() {
-  mkdirSync(APP_DIR, { recursive: true });
-  writeFileSync(LOG_PATH, "", "utf8");
+  ensurePrivateAppDir();
+  writePrivateFile(LOG_PATH, "");
 }
 
 function connectionPidFiles() {
@@ -3235,8 +3552,8 @@ async function handleProxyRequest(req, res) {
     }
 
     if (req.method === "POST" && url.pathname === "/v1/responses") {
-      const body = await readJsonBody(req);
-      await handleResponsesRequest(res, token, body, context);
+      const body = await readJsonBody(req, proxyBodyLimitBytes());
+      await handleResponsesRequest(req, res, token, body, context);
       return;
     }
 
@@ -3258,7 +3575,7 @@ async function handleProxyRequest(req, res) {
 }
 
 async function forwardModels(res, token, context) {
-  const upstream = await fetch(MODELS_URL, {
+  const upstream = await fetchWithTimeout(MODELS_URL, {
     headers: { authorization: `Bearer ${token}` }
   });
   logRequest(context, {
@@ -3270,21 +3587,24 @@ async function forwardModels(res, token, context) {
 }
 
 async function forwardChatCompletions(req, res, token, context) {
-  const rawBody = await readRawBody(req);
+  const rawBody = await readRawBody(req, proxyBodyLimitBytes());
   const body = safeJson(rawBody) || {};
   const routedBody = { ...body };
   const routing = applyModelRouting(routedBody);
   const toolOrder = normalizeToolMessageOrder(routedBody);
   const compatibility = applyProviderCompatibility(routedBody);
-  const upstream = await fetch(`${OPENCODE_BASE_URL}/chat/completions`, {
+  const endpoint = opencodeModelEndpoint(routedBody.model);
+  const upstreamPath = opencodeEndpointPath(routedBody.model);
+  const upstreamBody = endpoint === "messages"
+    ? chatCompletionsToAnthropicMessages({ ...routedBody, stream: false })
+    : routedBody;
+  const upstream = await fetchWithTimeout(`${OPENCODE_BASE_URL}${upstreamPath}`, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": req.headers["content-type"] || "application/json"
-    },
-    body: JSON.stringify(routedBody)
+    headers: openCodeRequestHeaders(token, endpoint, req.headers["content-type"] || "application/json"),
+    signal: requestAbortSignal(req, res),
+    body: JSON.stringify(upstreamBody)
   });
-  logRequest(context, {
+  const logFields = {
     status: upstream.status,
     model: routedBody.model,
     requested_model: routing.requestedModel,
@@ -3294,25 +3614,50 @@ async function forwardChatCompletions(req, res, token, context) {
     tool_choice: compatibility.toolChoice,
     synthetic_tools: toolOrder.syntheticToolMessages,
     stream: Boolean(routedBody.stream),
+    stream_forced_off: endpoint === "messages" && Boolean(routedBody.stream),
     tools: Array.isArray(routedBody.tools) ? routedBody.tools.length : 0,
     upstream_host: upstreamHost(),
-    upstream_path: "/chat/completions"
-  });
-  await pipeFetchResponse(res, upstream);
+    upstream_path: upstreamPath
+  };
+
+  if (endpoint === "chat") {
+    logRequest(context, logFields);
+    await pipeFetchResponse(res, upstream);
+    return;
+  }
+
+  const upstreamText = await upstream.text();
+  if (!upstream.ok) {
+    logRequest(context, { ...logFields, error_type: "upstream_error", error_message: upstreamErrorMessage(upstreamText) });
+    sendJson(res, upstream.status, safeJson(upstreamText) || {
+      error: {
+        message: upstreamText || `OpenCode returned HTTP ${upstream.status}`,
+        type: "upstream_error"
+      }
+    });
+    return;
+  }
+
+  const chatJson = anthropicMessageToChatCompletion(JSON.parse(upstreamText), routedBody);
+  logRequest(context, { ...logFields, upstream_model: chatJson.model });
+  sendJson(res, 200, chatJson);
 }
 
-async function handleResponsesRequest(res, token, responsesBody, context) {
+async function handleResponsesRequest(req, res, token, responsesBody, context) {
   const chatBody = responsesToChatCompletions(responsesBody);
   const routing = applyModelRouting(chatBody);
   const toolOrder = normalizeToolMessageOrder(chatBody);
   const compatibility = applyProviderCompatibility(chatBody);
-  const upstream = await fetch(`${OPENCODE_BASE_URL}/chat/completions`, {
+  const endpoint = opencodeModelEndpoint(chatBody.model);
+  const upstreamPath = opencodeEndpointPath(chatBody.model);
+  const upstreamBody = endpoint === "messages"
+    ? chatCompletionsToAnthropicMessages({ ...chatBody, stream: false })
+    : { ...chatBody, stream: false };
+  const upstream = await fetchWithTimeout(`${OPENCODE_BASE_URL}${upstreamPath}`, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ ...chatBody, stream: false })
+    headers: openCodeRequestHeaders(token, endpoint),
+    signal: requestAbortSignal(req, res),
+    body: JSON.stringify(upstreamBody)
   });
 
   const upstreamText = await upstream.text();
@@ -3328,7 +3673,7 @@ async function handleResponsesRequest(res, token, responsesBody, context) {
     stream: Boolean(responsesBody.stream),
     tools: Array.isArray(chatBody.tools) ? chatBody.tools.length : 0,
     upstream_host: upstreamHost(),
-    upstream_path: "/chat/completions"
+    upstream_path: upstreamPath
   };
   if (!upstream.ok) {
     logRequest(context, { ...logFields, error_type: "upstream_error", error_message: upstreamErrorMessage(upstreamText) });
@@ -3341,7 +3686,8 @@ async function handleResponsesRequest(res, token, responsesBody, context) {
     return;
   }
 
-  const chatJson = JSON.parse(upstreamText);
+  const upstreamJson = JSON.parse(upstreamText);
+  const chatJson = endpoint === "messages" ? anthropicMessageToChatCompletion(upstreamJson, chatBody) : upstreamJson;
   const reasoningStored = rememberDeepSeekReasoning(chatJson);
   const responseJson = chatCompletionToResponse(chatJson, responsesBody);
   logRequest(context, { ...logFields, reasoning_stored: reasoningStored, upstream_model: chatJson.model });
@@ -3525,6 +3871,241 @@ function responsesToolChoiceToChat(choice) {
     return { type: "function", function: { name: choice.name } };
   }
   return choice;
+}
+
+function openCodeRequestHeaders(token, endpoint, contentType = "application/json") {
+  const headers = {
+    authorization: `Bearer ${token}`,
+    "content-type": contentType
+  };
+  if (endpoint === "messages") {
+    headers["x-api-key"] = token;
+    headers["anthropic-version"] = "2023-06-01";
+  }
+  return headers;
+}
+
+function chatCompletionsToAnthropicMessages(chatBody) {
+  const system = [];
+  const messages = [];
+  const inputMessages = Array.isArray(chatBody.messages) ? chatBody.messages : [];
+
+  for (const message of inputMessages) {
+    const role = normalizeChatRole(message?.role);
+    if (!role) {
+      continue;
+    }
+
+    if (role === "system") {
+      const text = contentToText(message.content).trim();
+      if (text) {
+        system.push(text);
+      }
+      continue;
+    }
+
+    if (role === "tool") {
+      messages.push({
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: message.tool_call_id || "call_unknown",
+          content: contentToText(message.content)
+        }]
+      });
+      continue;
+    }
+
+    const content = chatMessageToAnthropicContent(message);
+    messages.push({
+      role: role === "assistant" ? "assistant" : "user",
+      content: content.length > 0 ? content : [{ type: "text", text: "" }]
+    });
+  }
+
+  if (messages.length === 0) {
+    messages.push({ role: "user", content: [{ type: "text", text: "" }] });
+  }
+
+  const body = {
+    model: chatBody.model || DEFAULT_MODEL,
+    max_tokens: Number.isFinite(chatBody.max_tokens) ? chatBody.max_tokens : 4096,
+    messages
+  };
+
+  if (system.length > 0) {
+    body.system = system.join("\n\n");
+  }
+
+  const tools = chatToolsToAnthropicTools(chatBody.tools);
+  if (tools.length > 0) {
+    body.tools = tools;
+  }
+
+  const toolChoice = chatToolChoiceToAnthropic(chatBody.tool_choice);
+  if (toolChoice) {
+    body.tool_choice = toolChoice;
+  }
+
+  if (chatBody.temperature !== undefined) {
+    body.temperature = chatBody.temperature;
+  }
+  if (chatBody.top_p !== undefined) {
+    body.top_p = chatBody.top_p;
+  }
+
+  return body;
+}
+
+function chatMessageToAnthropicContent(message) {
+  const blocks = chatContentToAnthropicBlocks(message?.content);
+  if (Array.isArray(message?.tool_calls)) {
+    for (const toolCall of message.tool_calls) {
+      const name = toolCall?.function?.name;
+      if (!name) {
+        continue;
+      }
+      blocks.push({
+        type: "tool_use",
+        id: toolCall.id || `call_${randomId()}`,
+        name,
+        input: parseToolArguments(toolCall.function.arguments)
+      });
+    }
+  }
+  return blocks;
+}
+
+function chatContentToAnthropicBlocks(content) {
+  if (typeof content === "string") {
+    return content ? [{ type: "text", text: content }] : [];
+  }
+  if (!Array.isArray(content)) {
+    const text = contentToText(content);
+    return text ? [{ type: "text", text }] : [];
+  }
+
+  const blocks = [];
+  for (const part of content) {
+    if (typeof part === "string") {
+      if (part) {
+        blocks.push({ type: "text", text: part });
+      }
+      continue;
+    }
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    const text = part.text ?? part.input_text ?? part.output_text ?? part.refusal;
+    if (text) {
+      blocks.push({ type: "text", text: String(text) });
+    }
+  }
+  return blocks;
+}
+
+function chatToolsToAnthropicTools(tools) {
+  if (!Array.isArray(tools)) {
+    return [];
+  }
+  return tools
+    .map((tool) => {
+      const definition = tool?.function || tool;
+      const name = definition?.name;
+      if (!name) {
+        return null;
+      }
+      return {
+        name,
+        description: definition.description || "",
+        input_schema: definition.parameters || definition.input_schema || { type: "object", properties: {} }
+      };
+    })
+    .filter(Boolean);
+}
+
+function chatToolChoiceToAnthropic(choice) {
+  if (!choice || choice === "auto") {
+    return undefined;
+  }
+  if (choice === "required") {
+    return { type: "any" };
+  }
+  if (choice?.type === "function" && choice.function?.name) {
+    return { type: "tool", name: choice.function.name };
+  }
+  return undefined;
+}
+
+function parseToolArguments(value) {
+  if (!value) {
+    return {};
+  }
+  if (typeof value === "object") {
+    return value;
+  }
+  const parsed = safeJson(String(value));
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+}
+
+function anthropicMessageToChatCompletion(messageJson, requestBody) {
+  const text = [];
+  const toolCalls = [];
+  const content = Array.isArray(messageJson.content) ? messageJson.content : [];
+
+  for (const part of content) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    if (part.type === "text" && part.text) {
+      text.push(part.text);
+      continue;
+    }
+    if (part.type === "tool_use" && part.name) {
+      toolCalls.push({
+        id: part.id || `call_${randomId()}`,
+        type: "function",
+        function: {
+          name: part.name,
+          arguments: JSON.stringify(part.input || {})
+        }
+      });
+    }
+  }
+
+  const message = {
+    role: "assistant",
+    content: text.join("\n") || null
+  };
+  if (toolCalls.length > 0) {
+    message.tool_calls = toolCalls;
+  }
+
+  return {
+    id: messageJson.id || `chatcmpl_${randomId()}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: messageJson.model || requestBody.model || DEFAULT_MODEL,
+    choices: [{
+      index: 0,
+      message,
+      finish_reason: toolCalls.length > 0 || messageJson.stop_reason === "tool_use" ? "tool_calls" : messageJson.stop_reason === "max_tokens" ? "length" : "stop"
+    }],
+    usage: anthropicUsageToChatUsage(messageJson.usage)
+  };
+}
+
+function anthropicUsageToChatUsage(usage) {
+  if (!usage) {
+    return undefined;
+  }
+  const promptTokens = usage.input_tokens ?? 0;
+  const completionTokens = usage.output_tokens ?? 0;
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: usage.total_tokens ?? promptTokens + completionTokens
+  };
 }
 
 function chatCompletionToResponse(chatJson, requestBody) {
@@ -3935,6 +4516,7 @@ function catalogModels(primaryModel) {
 }
 
 function catalogEntry(model, priority, baseInstructions) {
+  const contextWindow = opencodeModelContextWindow(model)?.tokens || DEFAULT_CONTEXT_WINDOW;
   return {
     slug: model,
     display_name: model,
@@ -3959,8 +4541,8 @@ function catalogEntry(model, priority, baseInstructions) {
     truncation_policy: { mode: "bytes", limit: 10_000 },
     supports_parallel_tool_calls: false,
     supports_image_detail_original: false,
-    context_window: DEFAULT_CONTEXT_WINDOW,
-    max_context_window: DEFAULT_CONTEXT_WINDOW,
+    context_window: contextWindow,
+    max_context_window: contextWindow,
     auto_compact_token_limit: null,
     effective_context_window_percent: 95,
     experimental_supported_tools: [],
@@ -4023,12 +4605,8 @@ function validateModel(model, force) {
     return;
   }
 
-  const anthroNote = ANTHROPIC_ONLY_DOC_MODELS.has(model)
-    ? `\n"${model}" is documented by OpenCode Go for the Anthropic-compatible messages endpoint, not the OpenAI-compatible chat-completions endpoint Navo uses upstream.`
-    : "";
-
   throw new Error(
-    `Model "${model}" is not in this helper's Codex-compatible OpenCode Go list.${anthroNote}\n` +
+    `Model "${model}" is not in this helper's docs-backed OpenCode Go list.\n` +
     `Use --force to write it anyway, or choose one of:\n  ${[...CODEX_CHAT_MODELS.keys()].join(", ")}`
   );
 }
@@ -4064,7 +4642,8 @@ function validateClaudeModel(model, force) {
 }
 
 function normalizeModel(model) {
-  return model.startsWith(`${PROVIDER_ID}/`) ? model.slice(PROVIDER_ID.length + 1) : model;
+  const withoutProvider = model.startsWith(`${PROVIDER_ID}/`) ? model.slice(PROVIDER_ID.length + 1) : model;
+  return OPENCODE_MODEL_ALIASES.get(withoutProvider) || withoutProvider;
 }
 
 function tokenFromRequest(req) {
@@ -4090,6 +4669,15 @@ function applyModelRouting(chatBody) {
   const requestedModel = normalizeModel(String(chatBody.model || DEFAULT_MODEL));
   const routing = readRoutingConfig();
   if (!routing?.enabled) {
+    const configured = activeConfiguredOpenCodeModelInfo();
+    if (configured.active) {
+      chatBody.model = configured.model;
+      return {
+        requestedModel,
+        route: requestedModel === configured.model ? "selected_model" : "selected_model_override"
+      };
+    }
+
     if (CODEX_CHAT_MODELS.has(requestedModel)) {
       chatBody.model = requestedModel;
       return { requestedModel, route: "default" };
@@ -4245,21 +4833,27 @@ function isDeepSeekV4Model(model) {
 
 function upstreamErrorMessage(text) {
   const json = safeJson(text);
-  return safeErrorMessage(json?.error?.message || text || "Upstream request failed.");
+  const code = json?.error?.type || json?.error?.code || "upstream_error";
+  return `Upstream request failed (${safeLogCode(code)}).`;
 }
 
 function activeConfiguredOpenCodeModel() {
+  return activeConfiguredOpenCodeModelInfo().model;
+}
+
+function activeConfiguredOpenCodeModelInfo() {
   try {
     const configPath = codexConfigPath();
     const text = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+    const provider = readTopLevelValue(text, "model_provider") || "";
     const model = normalizeModel(String(readTopLevelValue(text, "model") || DEFAULT_MODEL));
-    if (CODEX_CHAT_MODELS.has(model)) {
-      return model;
+    if (provider === PROVIDER_ID && CODEX_CHAT_MODELS.has(model)) {
+      return { model, active: true };
     }
   } catch {
     // Fall through to the stable default.
   }
-  return DEFAULT_MODEL;
+  return { model: DEFAULT_MODEL, active: false };
 }
 
 function routingSummary() {
@@ -4293,8 +4887,8 @@ function readRoutingConfig() {
 }
 
 function writeRoutingConfig(config) {
-  mkdirSync(APP_DIR, { recursive: true });
-  writeFileSync(ROUTING_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  ensurePrivateAppDir();
+  writePrivateFile(ROUTING_PATH, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 function removeRoutingConfig() {
@@ -4313,27 +4907,79 @@ async function pipeFetchResponse(res, upstream) {
   res.end(text);
 }
 
-async function readJsonBody(req) {
-  const raw = await readRawBody(req);
+async function fetchWithTimeout(url, options = {}) {
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => {
+    timeoutController.abort();
+  }, upstreamTimeoutMs());
+  const signals = [timeoutController.signal, options.signal].filter(Boolean);
+  const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+
+  try {
+    return await fetch(url, { ...options, signal });
+  } catch (error) {
+    if (timeoutController.signal.aborted) {
+      throw httpError(504, "Upstream request timed out.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function requestAbortSignal(req, res) {
+  const controller = new AbortController();
+  const abortIfOpen = () => {
+    if (!res?.writableEnded) {
+      controller.abort();
+    }
+  };
+  req.on("aborted", abortIfOpen);
+  req.on("close", () => {
+    if (!req.complete) {
+      abortIfOpen();
+    }
+  });
+  res?.on("close", abortIfOpen);
+  return controller.signal;
+}
+
+async function readJsonBody(req, limitBytes = proxyBodyLimitBytes()) {
+  const raw = await readRawBody(req, limitBytes);
   if (!raw.trim()) {
     return {};
   }
   return JSON.parse(raw);
 }
 
-async function readRawBody(req) {
+async function readRawBody(req, limitBytes = proxyBodyLimitBytes()) {
   return await new Promise((resolve, reject) => {
     let body = "";
+    let settled = false;
     req.setEncoding("utf8");
     req.on("data", (chunk) => {
+      if (settled) {
+        return;
+      }
       body += chunk;
-      if (body.length > 50 * 1024 * 1024) {
-        reject(new Error("Request body is too large."));
+      if (Buffer.byteLength(body, "utf8") > limitBytes) {
+        settled = true;
+        reject(httpError(413, "Request body is too large."));
         req.destroy();
       }
     });
-    req.on("end", () => resolve(body));
-    req.on("error", reject);
+    req.on("end", () => {
+      if (!settled) {
+        settled = true;
+        resolve(body);
+      }
+    });
+    req.on("error", (error) => {
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
   });
 }
 
@@ -4342,7 +4988,11 @@ function sendJson(res, status, body) {
   const payload = body instanceof Error
     ? { error: { message: body.message, type: "proxy_error" } }
     : body;
-  res.writeHead(actualStatus, { "content-type": "application/json" });
+  res.writeHead(actualStatus, {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff"
+  });
   res.end(JSON.stringify(payload));
 }
 
@@ -4366,8 +5016,8 @@ function logActivity(event, fields = {}) {
 }
 
 function appendActivityLog(event, fields = {}) {
-  mkdirSync(APP_DIR, { recursive: true });
-  writeFileSync(LOG_PATH, `${formatActivityLine(event, fields)}\n`, { encoding: "utf8", flag: "a" });
+  ensurePrivateAppDir();
+  writePrivateFile(LOG_PATH, `${formatActivityLine(event, fields)}\n`, { flag: "a" });
 }
 
 function formatActivityLine(event, fields = {}) {
@@ -4383,6 +5033,10 @@ function safeLogValue(value) {
     return JSON.stringify(text);
   }
   return text;
+}
+
+function safeLogCode(value) {
+  return String(value || "upstream_error").replace(/[^a-z0-9_.:-]/giu, "_").slice(0, 80) || "upstream_error";
 }
 
 function safeErrorMessage(error) {
@@ -4424,10 +5078,10 @@ function codexConfigPath() {
 }
 
 function backupConfig(configPath, content, label = "config") {
-  mkdirSync(BACKUP_DIR, { recursive: true });
+  ensurePrivateBackupDir();
   const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.(\d{3})Z$/, "$1Z");
   const backupPath = join(BACKUP_DIR, `${label}-${timestamp}.toml`);
-  writeFileSync(backupPath, content, "utf8");
+  writePrivateFile(backupPath, content);
   return backupPath;
 }
 
@@ -4522,8 +5176,39 @@ function uniquePaths(paths) {
   return [...new Set(paths.filter(Boolean))];
 }
 
+function ensurePrivateAppDir() {
+  ensurePrivateDir(APP_DIR);
+}
+
+function ensurePrivateBackupDir() {
+  ensurePrivateAppDir();
+  ensurePrivateDir(BACKUP_DIR);
+}
+
+function ensurePrivateDir(path) {
+  mkdirSync(path, { recursive: true, mode: PRIVATE_DIR_MODE });
+  chmodBestEffort(path, PRIVATE_DIR_MODE);
+}
+
+function writePrivateFile(path, content, options = {}) {
+  writeFileSync(path, content, {
+    encoding: "utf8",
+    mode: PRIVATE_FILE_MODE,
+    ...options
+  });
+  chmodBestEffort(path, PRIVATE_FILE_MODE);
+}
+
+function chmodBestEffort(path, mode) {
+  try {
+    chmodSync(path, mode);
+  } catch {
+    // Permission hardening is best effort for unusual filesystems.
+  }
+}
+
 function storeToken(token) {
-  mkdirSync(APP_DIR, { recursive: true });
+  ensurePrivateAppDir();
 
   if (process.platform === "darwin" && commandExists("security")) {
     spawnSync("security", ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT], {
@@ -4548,8 +5233,7 @@ function storeToken(token) {
     console.warn("Keychain storage failed, falling back to a chmod 0600 token file.");
   }
 
-  writeFileSync(FILE_TOKEN_PATH, `${token}\n`, { encoding: "utf8", mode: 0o600 });
-  chmodSync(FILE_TOKEN_PATH, 0o600);
+  writePrivateFile(FILE_TOKEN_PATH, `${token}\n`);
 }
 
 function clearStoredToken() {
@@ -4655,6 +5339,26 @@ function proxyBaseUrl(port) {
   return `http://127.0.0.1:${port}/v1`;
 }
 
+function upstreamTimeoutMs() {
+  return readPositiveIntEnv("NAVO_UPSTREAM_TIMEOUT_MS", DEFAULT_UPSTREAM_TIMEOUT_MS, 1_000, 10 * 60 * 1000);
+}
+
+function proxyBodyLimitBytes() {
+  return readPositiveIntEnv("NAVO_PROXY_BODY_LIMIT_BYTES", DEFAULT_PROXY_BODY_LIMIT_BYTES, 1024, 100 * 1024 * 1024);
+}
+
+function readPositiveIntEnv(name, fallback, min, max) {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    return fallback;
+  }
+  return value;
+}
+
 function upstreamHost() {
   try {
     return new URL(OPENCODE_BASE_URL).host;
@@ -4663,12 +5367,45 @@ function upstreamHost() {
   }
 }
 
-function readPort(options) {
-  const port = Number(options.port || DEFAULT_PROXY_PORT);
+function readPort(options = {}) {
+  const explicitPort = options.port;
+  const port = Number(explicitPort || configuredProviderPort() || DEFAULT_PROXY_PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`Invalid port: ${options.port}`);
+    throw new Error(`Invalid port: ${explicitPort || port}`);
   }
   return port;
+}
+
+function configuredProviderPort() {
+  try {
+    const configPath = codexConfigPath();
+    if (!existsSync(configPath)) {
+      return null;
+    }
+    const text = readFileSync(configPath, "utf8");
+    const baseUrl = readProviderValue(text, PROVIDER_ID, "base_url");
+    if (!baseUrl) {
+      return null;
+    }
+    const url = new URL(baseUrl);
+    const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+    return Number.isInteger(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+function readProviderValue(text, providerId, key) {
+  const table = new RegExp(`^\\s*\\[model_providers\\.${escapeRegExp(providerId)}\\]\\s*$`, "m");
+  const match = table.exec(text);
+  if (!match) {
+    return "";
+  }
+  const rest = text.slice(match.index + match[0].length);
+  const nextTable = rest.search(/^\s*\[/m);
+  const section = nextTable === -1 ? rest : rest.slice(0, nextTable);
+  const valueMatch = section.match(new RegExp(`^\\s*${escapeRegExp(key)}\\s*=\\s*["']?([^"'\\n#]+)["']?`, "m"));
+  return valueMatch?.[1]?.trim() || "";
 }
 
 function readUiPort(options) {
@@ -4869,6 +5606,14 @@ function sleep(ms) {
 
 function tomlString(value) {
   return JSON.stringify(String(value));
+}
+
+function htmlAttr(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function escapeRegExp(value) {

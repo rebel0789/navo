@@ -37,3 +37,13 @@ Navo runs local HTTP servers bound to:
 
 Do not bind these servers to public network interfaces.
 
+The dashboard also requires a per-process local session token for state-changing
+actions, rejects cross-site browser requests, and only restores backups that
+Navo created and lists. The local OpenCode connection requires a bearer token
+from Codex before it forwards model traffic.
+
+## Local Permissions
+
+Navo creates `~/.navo` and `~/.navo/backups` with private directory
+permissions. Token fallback files, local logs, pid files, routing config, and
+Codex config backups are written with private file permissions.

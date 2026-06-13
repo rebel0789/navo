@@ -38,13 +38,21 @@ wire_api = "responses"
 supports_websockets = false
 ```
 
-Codex sends Responses API requests to Navo. Navo converts them to Chat Completions and forwards them to:
+Codex sends Responses API requests to Navo. Navo converts them to the OpenCode Go endpoint documented for the selected model. GLM, Kimi, DeepSeek, and MiMo use:
 
 ```text
 https://opencode.ai/zen/go/v1/chat/completions
 ```
 
+MiniMax and Qwen use:
+
+```text
+https://opencode.ai/zen/go/v1/messages
+```
+
 ## Routing
+
+In single-model mode, Navo treats the selected model in Codex config as the source of truth. If an older Navo-backed chat asks for a previous model, Navo preserves the request body/context and changes only the upstream model.
 
 When routing is enabled:
 

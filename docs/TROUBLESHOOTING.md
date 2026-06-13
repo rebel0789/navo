@@ -67,11 +67,13 @@ OpenCode proof must include:
 ```text
 upstream_host=opencode.ai
 upstream_path=/chat/completions
+# or, for MiniMax/Qwen models:
+upstream_path=/messages
 ```
 
 ## Requested Model And Upstream Model Differ
 
-This can be normal when split routing is enabled.
+This can be normal. In single-model mode, Navo forces any request that reaches the bridge to the selected OpenCode model. In split routing mode, Navo chooses the chat or agent model based on whether tools are present.
 
 ```text
 requested_model=gpt-...
@@ -79,7 +81,7 @@ model=deepseek-v4-flash
 upstream_host=opencode.ai
 ```
 
-`requested_model` is what Codex asked for. `model` is what Navo actually sent upstream.
+`requested_model` is what Codex asked for. `model` is what Navo actually sent upstream with the original request context.
 
 To use Codex native models again:
 
@@ -88,11 +90,11 @@ navo codex-model gpt-5.5
 navo proxy-stop
 ```
 
-Then restart Codex App or start a new session.
+Then open a new Codex session.
 
 ## Restore Did Not Change The Current Session
 
-Codex may keep provider settings for an already-running session.
+Codex may keep provider settings for an already-running native-provider session.
 
 After restore or model switching:
 
@@ -100,9 +102,9 @@ After restore or model switching:
 navo status
 ```
 
-Then restart Codex App or open a new Codex session.
+If the chat is already Navo-backed, the next request will be routed to the selected model. If the chat is still native Codex/OpenAI, open a new Codex session.
 
-Opening a new chat can look surprising, but it is the reliable way for Codex to reload a custom provider/model. Keep using the same project/workspace; the conversation is new, not the project files.
+Opening a new chat can look surprising, but it is the reliable way for a native-provider chat to start using a custom provider/model while preserving existing chat history. Keep using the same project/workspace; the conversation is new, not the project files.
 
 ## Safe Recovery
 

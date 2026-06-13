@@ -1,14 +1,24 @@
 {
-  "name": "navo",
+  "name": "@rebel0x/navo",
   "version": "0.1.0",
   "description": "Switch Codex between native and OpenCode models safely with a local connection and dashboard.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rebel0789/navo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rebel0789/navo/issues"
+  },
+  "homepage": "https://github.com/rebel0789/navo#readme",
   "bin": {
-    "navo": "./bin/navo.mjs"
+    "navo": "bin/navo.mjs"
   },
   "scripts": {
     "check": "node --check bin/navo.mjs",
-    "models": "node bin/navo.mjs models"
+    "test": "node --test",
+    "models": "node bin/navo.mjs models",
+    "prepublishOnly": "npm run check && npm test"
   },
   "files": [
     "bin",
