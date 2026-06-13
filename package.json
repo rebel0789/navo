@@ -1,0 +1,42 @@
+{
+  "name": "navo",
+  "version": "0.1.0",
+  "description": "Switch Codex between native and OpenCode models safely with a local connection and dashboard.",
+  "type": "module",
+  "bin": {
+    "navo": "./bin/navo.mjs"
+  },
+  "scripts": {
+    "check": "node --check bin/navo.mjs",
+    "models": "node bin/navo.mjs models"
+  },
+  "files": [
+    "bin",
+    "assets",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "codex",
+    "codex-cli",
+    "developer-tools",
+    "local-first",
+    "model-router",
+    "opencode",
+    "navo",
+    "llm",
+    "proxy",
+    "responses-api",
+    "chat-completions"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

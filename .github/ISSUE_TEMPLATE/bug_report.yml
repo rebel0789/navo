@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a Navo bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include the command, dashboard action, or mode you were using.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Navo output
+      description: Paste `navo status`, `navo verify`, or privacy-safe bridge logs. Do not paste API keys or prompts.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Navo version
+      placeholder: "navo --version or npm list -g navo"
+

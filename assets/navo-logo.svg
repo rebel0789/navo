@@ -1,0 +1,24 @@
+<svg width="960" height="960" viewBox="0 0 960 960" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Navo logo</title>
+  <desc id="desc">An original abstract Navo mark showing two model paths converging through a navigation path.</desc>
+  <rect width="960" height="960" rx="216" fill="#F7FAFC"/>
+  <path d="M285 292L148 430C119 459 119 501 148 530L285 668" stroke="#17232D" stroke-width="76" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M675 292L812 430C841 459 841 501 812 530L675 668" stroke="#17232D" stroke-width="76" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M146 480H330C366 480 379 536 416 536C453 536 466 424 504 424C541 424 554 536 591 536C628 536 641 480 678 480H814" stroke="url(#pathGradient)" stroke-width="42" stroke-linecap="round"/>
+  <circle cx="480" cy="480" r="104" fill="#17232D"/>
+  <circle cx="480" cy="480" r="82" stroke="#F7FAFC" stroke-width="18"/>
+  <path d="M480 390L547 558L480 522L413 558L480 390Z" fill="url(#navGradient)"/>
+  <circle cx="146" cy="480" r="39" fill="#1297FF"/>
+  <circle cx="814" cy="480" r="39" fill="#62D84E"/>
+  <defs>
+    <linearGradient id="pathGradient" x1="146" y1="480" x2="814" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1297FF"/>
+      <stop offset="0.52" stop-color="#24C7D9"/>
+      <stop offset="1" stop-color="#62D84E"/>
+    </linearGradient>
+    <linearGradient id="navGradient" x1="413" y1="474" x2="547" y2="474" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1297FF"/>
+      <stop offset="1" stop-color="#62D84E"/>
+    </linearGradient>
+  </defs>
+</svg>
