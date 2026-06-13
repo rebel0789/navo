@@ -1,6 +1,6 @@
 {
   "name": "@rebel0x/navo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Switch Codex between native and OpenCode models safely with a local connection and dashboard.",
   "type": "module",
   "repository": {

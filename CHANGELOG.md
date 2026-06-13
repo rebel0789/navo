@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Add GitHub repository metadata for npm.
+- Add GitHub/star links to the dashboard and README.
+- Document cleanup for old `npm link` installs that block global install.
+
 ## 0.1.0
 
 - Initial Navo release.
@@ -10,4 +16,3 @@
 - Optional chat-vs-agent routing.
 - Privacy-safe activity logs.
 - Config backups and restore support.
-
