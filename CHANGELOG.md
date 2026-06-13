@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- Mark generated OpenCode model catalog entries as text/search/function-tool capable so Codex plugins and browser tools are not degraded in Navo mode.
+- Keep image capability disabled until the bridge can preserve image payloads end to end.
+
 ## 0.1.2
 
 - Rename the dashboard top-bar GitHub action to `Star on GitHub` so the CTA is visible from every dashboard tab.

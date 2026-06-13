@@ -503,6 +503,11 @@ test("configure writes Navo state and backups with private file modes", async ()
   assert.equal(slugs.includes("qwen3.7-max"), true);
   assert.equal(flash.context_window, 128_000);
   assert.equal(qwen.context_window, 128_000);
+  assert.equal(flash.web_search_tool_type, "text");
+  assert.equal(flash.supports_parallel_tool_calls, true);
+  assert.equal(flash.supports_search_tool, true);
+  assert.equal(flash.supports_image_detail_original, false);
+  assert.deepEqual(flash.input_modalities, ["text"]);
 
   const backups = readdirSync(backupDir).filter((name) => name.endsWith(".toml"));
   assert.equal(backups.length, 1);

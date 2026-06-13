@@ -19,7 +19,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const PROJECT_NAME = "Navo";
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 const GITHUB_REPO_URL = "https://github.com/rebel0789/navo";
 const PROVIDER_ID = "opencode-go";
 const PROVIDER_NAME = "OpenCode Go";
@@ -4575,7 +4575,7 @@ function catalogEntry(model, priority, baseInstructions) {
     apply_patch_tool_type: null,
     web_search_tool_type: "text",
     truncation_policy: { mode: "bytes", limit: 10_000 },
-    supports_parallel_tool_calls: false,
+    supports_parallel_tool_calls: true,
     supports_image_detail_original: false,
     context_window: contextWindow,
     max_context_window: contextWindow,
@@ -4583,7 +4583,7 @@ function catalogEntry(model, priority, baseInstructions) {
     effective_context_window_percent: 95,
     experimental_supported_tools: [],
     input_modalities: ["text"],
-    supports_search_tool: false
+    supports_search_tool: true
   };
 }
 

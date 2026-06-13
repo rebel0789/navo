@@ -97,6 +97,21 @@ upstream_host=opencode.ai
 
 `requested_model` is what Codex asked for. `model` is what Navo actually sent upstream with the original request context.
 
+## Codex Plugins Or Browser Tools Do Not Appear
+
+Upgrade to Navo `0.1.3` or newer, regenerate the OpenCode catalog, and restart Codex:
+
+```bash
+npm install -g @rebel0x/navo@latest
+navo on
+```
+
+Then quit and reopen Codex, or use the dashboard OpenCode/Codex mode buttons when they prompt for a Codex restart.
+
+Navo `0.1.2` wrote `~/.codex/navo-models.json` with tool capability flags disabled. That can make Codex degrade plugin/browser/tool behavior while OpenCode mode is active. The newer catalog advertises text/search/function-tool support, but still does not claim image input support.
+
+If a plugin reports an MCP error such as `resources/read`, that error is from the plugin runtime itself. Regenerating the catalog fixes Navo's model metadata, but a plugin runtime failure may still require restarting Codex or updating the affected plugin/Codex build.
+
 To use Codex native models again:
 
 ```bash
