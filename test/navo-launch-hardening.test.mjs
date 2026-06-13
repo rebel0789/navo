@@ -158,7 +158,7 @@ test("dashboard shows honest model controls without duplicate mode action cards"
     assert.match(html, /updatePendingModelSelection/u);
     assert.match(html, /selectedOpenCodeModelForAction/u);
     assert.match(html, /providerSwitchNeedsRestart/u);
-    assert.match(html, /Star on GitHub/u);
+    assert.match(html, /<a class="top-link" href="https:\/\/github\.com\/rebel0789\/navo" target="_blank" rel="noreferrer">Star on GitHub<\/a>/u);
     assert.match(html, /class="setup-star-link"/u);
     assert.match(html, /api\("\/api\/model", \{ model: pendingModelSelection \}/u);
     assert.doesNotMatch(html, /OpenCode API Key:/u);

@@ -2674,7 +2674,7 @@ function dashboardHtmlV2(sessionToken) {
 	        <button class="nav-item" data-view="docs">Docs</button>
       </nav>
       <div class="top-actions">
-        <a class="top-link" href="${GITHUB_REPO_URL}" target="_blank" rel="noreferrer">GitHub</a>
+        <a class="top-link" href="${GITHUB_REPO_URL}" target="_blank" rel="noreferrer">Star on GitHub</a>
         <button id="refresh-btn">Refresh</button>
         <button id="settings-btn" title="Settings">Settings</button>
       </div>
