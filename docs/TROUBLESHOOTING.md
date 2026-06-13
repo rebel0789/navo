@@ -2,6 +2,20 @@
 
 Use this guide when Navo looks configured but Codex or the dashboard behaves unexpectedly.
 
+## Global Install Says EEXIST
+
+If `npm install -g @rebel0x/navo` fails because `~/.local/bin/navo` already exists, the machine probably has an old development link from `npm link`.
+
+Clean the old link, then install the published package:
+
+```bash
+npm unlink -g navo
+npm install -g @rebel0x/navo
+navo version
+```
+
+Fresh installs do not need this. It is only for machines that previously linked a local checkout.
+
 ## Dashboard Says Fetch Failed
 
 The dashboard talks to its own local API on `127.0.0.1`.
