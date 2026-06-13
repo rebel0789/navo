@@ -99,7 +99,7 @@ upstream_host=opencode.ai
 
 ## Codex Plugins Or Browser Tools Do Not Appear
 
-Upgrade to Navo `0.1.3` or newer, regenerate the OpenCode catalog, and restart Codex:
+Upgrade to Navo `0.1.4` or newer, regenerate the OpenCode catalog, and restart Codex:
 
 ```bash
 npm install -g @rebel0x/navo@latest
@@ -108,7 +108,16 @@ navo on
 
 Then quit and reopen Codex, or use the dashboard OpenCode/Codex mode buttons when they prompt for a Codex restart.
 
-Navo `0.1.2` wrote `~/.codex/navo-models.json` with tool capability flags disabled. That can make Codex degrade plugin/browser/tool behavior while OpenCode mode is active. The newer catalog advertises text/search/function-tool support, but still does not claim image input support.
+Older Navo versions wrote `~/.codex/navo-models.json` without the full agent capability metadata that Codex Desktop expects. That can make Codex degrade plugin, marketplace, browser, or tool behavior while OpenCode mode is active. The newer catalog advertises shell-command, text, search, and function-tool support, and copies Codex's local model-message metadata when available. It still does not claim image input or freeform apply-patch support.
+
+You can confirm Codex still has marketplace configuration with:
+
+```bash
+codex plugin marketplace list
+codex plugin list
+```
+
+If those commands show marketplaces but the Desktop UI still says more plugins are coming soon, that is likely a Desktop-side limitation for the current host/model. Regenerate the catalog with `navo on` and restart Codex first; if it still happens, use the CLI plugin commands until the Codex Desktop build exposes marketplace UI for that provider.
 
 If a plugin reports an MCP error such as `resources/read`, that error is from the plugin runtime itself. Regenerating the catalog fixes Navo's model metadata, but a plugin runtime failure may still require restarting Codex or updating the affected plugin/Codex build.
 

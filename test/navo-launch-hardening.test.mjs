@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import { join } from "node:path";
@@ -476,6 +476,17 @@ test("proxy forces old Navo chats to the currently configured single model", asy
 test("configure writes Navo state and backups with private file modes", async () => {
   const homes = tempHomes();
   const configuredPort = await freePort();
+  const modelMessages = {
+    instructions_template: "Native Codex instructions {{instructions}}",
+    instructions_variables: { instructions: "test" }
+  };
+  mkdirSync(homes.codexHome, { recursive: true });
+  writeFileSync(join(homes.codexHome, "models_cache.json"), JSON.stringify({
+    models: [{
+      base_instructions: "Native Codex base instructions",
+      model_messages: modelMessages
+    }]
+  }), "utf8");
   const child = spawnNavo([
     "configure",
     "--model",
@@ -506,6 +517,16 @@ test("configure writes Navo state and backups with private file modes", async ()
   assert.equal(flash.web_search_tool_type, "text");
   assert.equal(flash.supports_parallel_tool_calls, true);
   assert.equal(flash.supports_search_tool, true);
+  assert.equal(flash.shell_type, "shell_command");
+  assert.deepEqual(flash.service_tiers, []);
+  assert.equal(flash.supports_reasoning_summaries, true);
+  assert.equal(flash.default_reasoning_summary, "none");
+  assert.equal(flash.support_verbosity, true);
+  assert.equal(flash.default_verbosity, "low");
+  assert.equal(flash.use_responses_lite, false);
+  assert.equal(flash.base_instructions, "Native Codex base instructions");
+  assert.deepEqual(flash.model_messages, modelMessages);
+  assert.equal(flash.apply_patch_tool_type, null);
   assert.equal(flash.supports_image_detail_original, false);
   assert.deepEqual(flash.input_modalities, ["text"]);
 

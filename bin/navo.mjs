@@ -19,7 +19,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const PROJECT_NAME = "Navo";
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 const GITHUB_REPO_URL = "https://github.com/rebel0789/navo";
 const PROVIDER_ID = "opencode-go";
 const PROVIDER_NAME = "OpenCode Go";
@@ -4529,7 +4529,8 @@ function buildManagedConfigBlock({ authMode, port }) {
 
 function writeModelCatalog(catalogPath, primaryModel) {
   const baseInstructions = codexBaseInstructions();
-  const models = catalogModels(primaryModel).map((model, priority) => catalogEntry(model, priority, baseInstructions));
+  const modelMessages = codexModelMessages();
+  const models = catalogModels(primaryModel).map((model, priority) => catalogEntry(model, priority, baseInstructions, modelMessages));
   const data = `${JSON.stringify({ models }, null, 2)}\n`;
 
   mkdirSync(dirname(catalogPath), { recursive: true });
@@ -4551,7 +4552,7 @@ function catalogModels(primaryModel) {
   return output;
 }
 
-function catalogEntry(model, priority, baseInstructions) {
+function catalogEntry(model, priority, baseInstructions, modelMessages) {
   const contextWindow = opencodeModelContextWindow(model)?.tokens || DEFAULT_CONTEXT_WINDOW;
   return {
     slug: model,
@@ -4559,19 +4560,20 @@ function catalogEntry(model, priority, baseInstructions) {
     description: "OpenCode Go subscription model",
     default_reasoning_level: null,
     supported_reasoning_levels: [],
-    shell_type: "default",
+    shell_type: "shell_command",
     visibility: "list",
     supported_in_api: true,
     priority,
     additional_speed_tiers: [],
+    service_tiers: [],
     availability_nux: null,
     upgrade: null,
     base_instructions: baseInstructions,
-    model_messages: null,
-    supports_reasoning_summaries: false,
-    default_reasoning_summary: "auto",
-    support_verbosity: false,
-    default_verbosity: null,
+    model_messages: modelMessages,
+    supports_reasoning_summaries: true,
+    default_reasoning_summary: "none",
+    support_verbosity: true,
+    default_verbosity: "low",
     apply_patch_tool_type: null,
     web_search_tool_type: "text",
     truncation_policy: { mode: "bytes", limit: 10_000 },
@@ -4583,7 +4585,8 @@ function catalogEntry(model, priority, baseInstructions) {
     effective_context_window_percent: 95,
     experimental_supported_tools: [],
     input_modalities: ["text"],
-    supports_search_tool: true
+    supports_search_tool: true,
+    use_responses_lite: false
   };
 }
 
@@ -4604,6 +4607,29 @@ function codexBaseInstructions() {
   }
 
   return "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.";
+}
+
+function codexModelMessages() {
+  const cachePath = join(process.env.CODEX_HOME || join(os.homedir(), ".codex"), "models_cache.json");
+  if (existsSync(cachePath)) {
+    try {
+      const cached = JSON.parse(readFileSync(cachePath, "utf8"));
+      const models = Array.isArray(cached.models) ? cached.models : [];
+      for (const model of models) {
+        if (isPlainObject(model.model_messages)) {
+          return model.model_messages;
+        }
+      }
+    } catch {
+      // The catalog can still work without native model-message metadata.
+    }
+  }
+
+  return null;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function codexModelCatalogPath(configPath = codexConfigPath()) {

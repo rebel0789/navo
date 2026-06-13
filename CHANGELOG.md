@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- Make generated OpenCode catalog entries match Codex native agent metadata more closely, including shell-command host metadata, response-lite flags, service tiers, verbosity defaults, and local Codex model-message templates when available.
+- Keep image input and freeform apply-patch support disabled until Navo can bridge those payloads honestly.
+
 ## 0.1.3
 
 - Mark generated OpenCode model catalog entries as text/search/function-tool capable so Codex plugins and browser tools are not degraded in Navo mode.
