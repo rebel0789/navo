@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Rename the dashboard top-bar GitHub action to `Star on GitHub` so the CTA is visible from every dashboard tab.
+
 ## 0.1.1
 
 - Add GitHub repository metadata for npm.

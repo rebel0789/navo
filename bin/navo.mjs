@@ -19,7 +19,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const PROJECT_NAME = "Navo";
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 const GITHUB_REPO_URL = "https://github.com/rebel0789/navo";
 const PROVIDER_ID = "opencode-go";
 const PROVIDER_NAME = "OpenCode Go";
