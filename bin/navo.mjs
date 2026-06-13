@@ -2442,10 +2442,22 @@ function dashboardHtmlV2(sessionToken) {
       border-top: 1px solid var(--line);
       margin: 4px -26px -26px;
       padding: 20px 26px 24px;
-      display: grid;
-      gap: 8px;
       color: var(--muted);
       font-size: 12px;
+    }
+
+    .setup-foot-row {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    .setup-foot-copy {
+      display: grid;
+      gap: 6px;
+      min-width: min(100%, 420px);
     }
 
     .setup-foot strong {
@@ -2457,6 +2469,25 @@ function dashboardHtmlV2(sessionToken) {
       color: var(--ink);
       font-weight: 800;
       text-decoration: none;
+    }
+
+    .setup-star-link {
+      min-height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #111820;
+      border-radius: 7px;
+      background: #111820;
+      color: #fff !important;
+      padding: 0 14px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .setup-star-link:hover {
+      background: #26313b;
+      border-color: #26313b;
     }
 
     .status-card, .model-card {
@@ -2700,9 +2731,14 @@ function dashboardHtmlV2(sessionToken) {
           </div>
 
           <footer class="setup-foot">
-            <strong>100% Local • Secure • Private</strong>
-            <span>Navo runs locally on your Mac. Nothing leaves your machine except requests to OpenCode.</span>
-            <span><a href="${GITHUB_REPO_URL}" target="_blank" rel="noreferrer">Star Navo on GitHub</a> if it saves you setup time.</span>
+            <div class="setup-foot-row">
+              <div class="setup-foot-copy">
+                <strong>100% Local • Secure • Private</strong>
+                <span>Navo runs locally on your Mac. Nothing leaves your machine except requests to OpenCode.</span>
+                <span>If Navo saves you setup time, a GitHub star helps more Codex and OpenCode users find it.</span>
+              </div>
+              <a class="setup-star-link" href="${GITHUB_REPO_URL}" target="_blank" rel="noreferrer">Star on GitHub</a>
+            </div>
           </footer>
         </div>
       </section>

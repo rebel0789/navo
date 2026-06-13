@@ -158,6 +158,8 @@ test("dashboard shows honest model controls without duplicate mode action cards"
     assert.match(html, /updatePendingModelSelection/u);
     assert.match(html, /selectedOpenCodeModelForAction/u);
     assert.match(html, /providerSwitchNeedsRestart/u);
+    assert.match(html, /Star on GitHub/u);
+    assert.match(html, /class="setup-star-link"/u);
     assert.match(html, /api\("\/api\/model", \{ model: pendingModelSelection \}/u);
     assert.doesNotMatch(html, /OpenCode API Key:/u);
     assert.doesNotMatch(html, /<dd>200K<\/dd>/u);
