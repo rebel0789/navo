@@ -4,6 +4,7 @@
 
 - Add GitHub repository metadata for npm.
 - Add GitHub/star links to the dashboard and README.
+- Refresh the public README with a dashboard screenshot and shorter quick-start flow.
 - Document cleanup for old `npm link` installs that block global install.
 
 ## 0.1.0

@@ -1,315 +1,149 @@
 # Navo
 
-![Navo logo](assets/navo-logo.svg)
+Use Codex with Codex native models or OpenCode Go models, with local proof of where requests went.
 
-Safe model navigation for Codex and OpenCode.
+[![npm version](https://img.shields.io/npm/v/%40rebel0x%2Fnavo?color=111820)](https://www.npmjs.com/package/@rebel0x/navo)
+[![CI](https://github.com/rebel0789/navo/actions/workflows/ci.yml/badge.svg)](https://github.com/rebel0789/navo/actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Navo is an Ollama-style helper for using OpenCode Go subscription models in Codex App and Codex CLI. It configures Codex safely, runs a local Responses adapter for OpenCode Go endpoints, gives you fast model switching, and logs enough routing metadata to prove which upstream model was used without logging prompts or API keys.
+Navo is a local bridge for Codex App and Codex CLI. It configures Codex to call a local Responses API adapter on `127.0.0.1`, forwards requests to documented OpenCode Go endpoints, and records privacy-safe routing metadata. Your OpenCode API key stays on your machine.
 
-[Star Navo on GitHub](https://github.com/rebel0789/navo) if it saves you setup time.
+![Navo control dashboard](assets/navo-control-dashboard.png)
 
-## Guides
+## Start
 
-- [Getting Started](docs/GETTING_STARTED.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Publishing](docs/PUBLISHING.md)
-- [Launch Checklist](docs/LAUNCH_CHECKLIST.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security](SECURITY.md)
-- [Changelog](CHANGELOG.md)
-
-## Why Developers Star Navo
-
-- It makes Codex native and OpenCode Go model switching explicit instead of mysterious.
-- It gives privacy-safe proof with `navo verify --fresh` and activity logs.
-- It has a local dashboard for people who do not want to hand-edit TOML.
-- It keeps recovery simple with backups, native-mode switching, and `navo off`.
-
-## Why Navo Exists
-
-Codex custom providers use the Responses API wire format:
-
-```toml
-wire_api = "responses"
-```
-
-OpenCode Go documents OpenAI-compatible Chat Completions for GLM, Kimi, DeepSeek, and MiMo models:
-
-```text
-https://opencode.ai/zen/go/v1/chat/completions
-```
-
-It documents Anthropic-compatible Messages for MiniMax and Qwen models:
-
-```text
-https://opencode.ai/zen/go/v1/messages
-```
-
-Navo runs a local OpenCode connection on `127.0.0.1`. Codex talks Responses API to Navo, and Navo forwards to the documented OpenCode Go endpoint for the selected model.
-
-## One-Command Start
-
-After publish, users can start Navo without installing it globally:
+Run without installing globally:
 
 ```bash
 npx -y @rebel0x/navo@latest ui
 ```
 
-This opens the local dashboard, where the user can paste their OpenCode Go API key, choose OpenCode or Codex mode, and switch models. Navo stores secrets locally, never in the browser bundle or npm package.
-
-For a persistent install:
+Or install once:
 
 ```bash
 npm install -g @rebel0x/navo
 navo ui
 ```
 
-Local development:
-
-```bash
-npm link
-```
-
-Primary command:
-
-```bash
-navo help
-```
-
-## Terminal Quick Start
-
-```bash
-navo login
-navo app --model deepseek-v4-flash
-```
-
-That will:
-
-1. Store your OpenCode Go API key in macOS Keychain, falling back to a chmod `0600` file.
-2. Back up `~/.codex/config.toml`.
-3. Write `~/.codex/navo-models.json` so Codex can see OpenCode Go models.
-4. Configure Codex to call `http://127.0.0.1:17853/v1`.
-5. Start the local OpenCode connection.
-6. Open Codex App.
-
-## Daily Commands
-
-```bash
-navo on                         # configure Codex + start OpenCode mode
-navo off                        # restore normal Codex config + stop OpenCode mode
-navo app                        # turn on + open Codex App
-navo ui                         # start or focus the persistent local dashboard
-navo ui-stop                    # stop the dashboard server
-navo status                     # show active config, key, OpenCode connection, routing
-navo verify --fresh             # fail if Codex can still use the OpenAI path or proof is stale
-navo logs --lines 30            # privacy-safe OpenCode proof
-navo backups                    # inspect restore backups
-navo version                    # print installed version
-```
-
-After `navo on`, `navo off`, `navo model`, or `navo route`, chats that already call the Navo local endpoint can be routed to the newly selected OpenCode model on their next request. Chats still using the native Codex/OpenAI provider do not hit Navo, so open a new Codex chat/session for those to reload config.
-
-## Dashboard
-
-Start the local control panel:
-
-```bash
-navo ui
-```
-
-Then open:
+The dashboard opens at:
 
 ```text
 http://127.0.0.1:17854
 ```
 
-`navo ui` starts the dashboard in the background, opens Chrome, prints the URL, and exits. The dashboard keeps running after the terminal closes. Use `navo ui-stop` to stop it, `navo ui-status` to inspect it, or `navo ui --foreground` when developing the dashboard itself.
+## Requirements
 
-The dashboard can switch provider mode, start OpenCode, open Codex App, test your OpenCode API key, inspect safe activity logs, and restore non-Navo config backups. It binds to `127.0.0.1` only.
+- macOS for Codex App controls and Keychain storage.
+- Node.js 20 or newer.
+- Codex App or Codex CLI.
+- An OpenCode Go API key for OpenCode mode.
 
-The header shows a safety pill:
+## What Navo Does
 
-```text
-OpenCode fresh -> Navo is configured and recent OpenCode traffic is proven
-OpenCode ready -> Navo is configured; run a probe or new turn for fresh proof
-OpenAI risk    -> Codex is not fully routed through Navo
-```
+- Switches Codex between native Codex mode and OpenCode mode.
+- Runs a local Responses API adapter at `http://127.0.0.1:17853/v1`.
+- Routes GLM, Kimi, DeepSeek, and MiMo models to OpenCode Go Chat Completions.
+- Routes MiniMax and Qwen models to OpenCode Go Messages.
+- Forces existing Navo-backed chats to the selected OpenCode model on the next request.
+- Writes backups before changing `~/.codex/config.toml`.
+- Logs routing proof without prompts, headers, or API keys.
 
-Use a separate UI port if needed:
-
-```bash
-navo ui --port 17855
-```
-
-If your OpenCode connection is on a non-default port:
-
-```bash
-navo ui --opencode-port 17860
-```
-
-## Model Selection
-
-Run an arrow-key selector:
+## Common Commands
 
 ```bash
-navo model
+navo ui                         # start or focus the local dashboard
+navo on                         # configure Codex for OpenCode mode
+navo off                        # restore normal Codex config
+navo model                      # pick an OpenCode model
+navo codex-model gpt-5.5        # switch back to Codex native mode
+navo status                     # show current config and bridge state
+navo verify --fresh             # require recent OpenCode proof
+navo logs --lines 30            # inspect privacy-safe routing logs
+navo backups                    # list config backups
 ```
 
-Or switch directly:
+## Verify OpenCode Traffic
+
+Do not ask the assistant which model it is using. Check the local proof:
 
 ```bash
-navo model deepseek-v4-flash
-navo model glm-5.1
-navo model deepseek-v4-pro
-navo model kimi-k2.6
-```
-
-Switch back to a native Codex/OpenAI model:
-
-```bash
-navo codex-model
-navo codex-model gpt-5.5
-navo codex-model gpt-5.4
-```
-
-The dashboard shows one OpenCode model selector in **Active Model**. Use **Use OpenCode Mode** to install the Navo OpenCode provider and start the OpenCode connection, and **Revert to Codex Mode** to remove the Navo provider/catalog and switch Codex back to its native provider path. Provider-mode switches restart Codex so the app reloads the provider. If OpenCode mode is already active, changing the selector saves the model without restarting Codex. Existing Navo-backed chats are forced to the selected model on their next request without dropping the request context.
-
-Current Codex App builds may expose reasoning controls without exposing a custom-provider model picker. Navo switches the model through Codex config, which the App reads when it starts or opens a new session.
-
-Existing native Codex chats do not reliably reload provider changes in place because they do not call Navo. Navo saves the config and keeps your current Codex windows intact. Existing Navo-backed chats keep their context and are routed to the selected model by the bridge; native-provider chats need a new chat in the same project to start using Navo.
-
-## Chat vs Agent Routing
-
-Codex documents `plan_mode_reasoning_effort`, not a separate `plan_mode_model`. Navo can approximate split-model behavior at the OpenCode connection:
-
-```bash
-navo route
-navo route --chat glm-5.1 --agent deepseek-v4-flash
-navo route off
-navo restart
-```
-
-Routing rule:
-
-```text
-No tools in request -> chat/planning model
-Tools in request    -> agent/execution model
-```
-
-Activity logs include both the requested model and routed model:
-
-```text
-route=chat  model=glm-5.1             requested_model=deepseek-v4-flash upstream_model=frank/GLM-5.1
-route=agent model=deepseek-v4-flash   requested_model=glm-5.1             upstream_model=deepseek-v4-flash
-```
-
-If you see `requested_model=gpt-...` and `model=deepseek-v4-flash`, Codex requested a native-looking model name but Navo forced the OpenCode route. That is expected while Navo routing is enabled. To truly use Codex native mode, switch with `navo codex-model <model>` or the dashboard **Revert to Codex Mode** action, then open a new session.
-
-## Verify Routing
-
-```bash
-navo status
-navo verify
-navo verify --fresh
-navo guard --fix
 navo probe-routing
-navo probe-proxy --model deepseek-v4-flash
+navo verify --fresh
 navo logs --lines 20
 ```
 
-`navo verify` exits nonzero when the active Codex config is not using Navo. `navo verify --fresh` also requires recent OpenCode proof. `navo guard --fix` rewrites the Navo provider config and starts the OpenCode connection. Open a new Codex session after fixing config; an already-running session may keep using the model it started with.
-
-Good log lines look like:
+Good proof includes `upstream_host=opencode.ai` and one of these upstream paths:
 
 ```text
-status=200 model=deepseek-v4-flash upstream_host=opencode.ai upstream_path=/chat/completions upstream_model=deepseek-v4-flash
-status=200 model=qwen3.7-plus upstream_host=opencode.ai upstream_path=/messages upstream_model=qwen3.7-plus
+upstream_path=/chat/completions
+upstream_path=/messages
 ```
 
-The logs do not include prompts, message content, headers, or API keys.
-
-Do not rely on asking the assistant which model it is. Use `navo verify` and the OpenCode connection log. If a Codex turn is using Navo, the OpenCode connection log will get a fresh `POST path=/v1/responses` line with `upstream_host=opencode.ai`.
+Activity rows show fields like `requested_model`, `model`, `route`, `status`, and `upstream_model`. They do not include request text, request headers, API keys, or upstream prompt echoes.
 
 ## Supported OpenCode Go Models
 
-Navo exposes models from the OpenCode Go documentation. Chat-completions models:
+Chat Completions:
 
-- `deepseek-v4-flash`
-- `deepseek-v4-pro`
-- `glm-5.1`
-- `glm-5`
-- `kimi-k2.7-code`
-- `kimi-k2.6`
-- `mimo-v2.5-pro`
-- `mimo-v2.5`
+```text
+deepseek-v4-flash
+deepseek-v4-pro
+glm-5.1
+glm-5
+kimi-k2.7-code
+kimi-k2.6
+mimo-v2.5-pro
+mimo-v2.5
+```
 
-Messages models:
+Messages:
 
-- `minimax-m3`
-- `minimax-m2.7`
-- `minimax-m2.5`
-- `qwen3.7-max`
-- `qwen3.7-plus`
-- `qwen3.6-plus`
+```text
+minimax-m3
+minimax-m2.7
+minimax-m2.5
+qwen3.7-max
+qwen3.7-plus
+qwen3.6-plus
+```
 
-Navo does not display context-window values unless OpenCode documentation provides them. The current Go docs do not publish context windows for every listed model, so the dashboard leaves that row hidden.
+Navo does not show context-window values unless they are available from OpenCode documentation.
+
+## How It Works
+
+Codex custom providers speak the Responses API wire format:
+
+```toml
+wire_api = "responses"
+```
+
+OpenCode Go exposes documented OpenAI-compatible and Anthropic-compatible endpoints. Navo sits between them:
+
+```text
+Codex -> 127.0.0.1:17853/v1 -> OpenCode Go
+```
+
+Codex keeps its normal project files and chat history. Chats already backed by Navo can keep their context while Navo changes the upstream model. Native Codex chats do not hit Navo until Codex reloads the provider, so open a new Codex chat after switching from native mode to OpenCode mode.
 
 ## Safety
 
-Navo writes backups before changing Codex config and labels them:
+- The dashboard binds to `127.0.0.1` only.
+- API keys are stored in macOS Keychain, with a private `0600` file fallback.
+- Config backups are written before changes.
+- Dashboard state-changing requests require a local session token.
+- Logs intentionally exclude prompts, message content, headers, and keys.
 
-```text
-restore  -> normal Codex config
-opencode -> Navo-managed config
-```
+## Docs
 
-Undo:
+- [Getting Started](docs/GETTING_STARTED.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Security](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 
-```bash
-navo off
-```
+## Open Source
 
-Manual restore:
-
-```bash
-navo backups
-navo restore --backup /path/to/backup.toml
-navo proxy-stop
-```
-
-Navo state lives under `~/.navo`.
-
-## What Gets Written
-
-Codex config receives a managed provider block:
-
-```toml
-model = "deepseek-v4-flash"
-model_provider = "opencode-go"
-model_catalog_json = "/Users/you/.codex/navo-models.json"
-
-[model_providers.opencode-go]
-name = "OpenCode Go"
-base_url = "http://127.0.0.1:17853/v1"
-wire_api = "responses"
-supports_websockets = false
-
-[model_providers.opencode-go.auth]
-command = "/path/to/node"
-args = ["/path/to/bin/navo.mjs", "token"]
-timeout_ms = 5000
-refresh_interval_ms = 300000
-```
-
-## Development
-
-```bash
-npm run check
-npm test
-node bin/navo.mjs help
-```
-
-Navo has no runtime npm dependencies.
+Navo is MIT licensed. Issues and pull requests are welcome.
 
 If Navo saves you setup time, [star the GitHub repo](https://github.com/rebel0789/navo) so more Codex and OpenCode users can find it.
